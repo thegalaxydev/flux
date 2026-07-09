@@ -3,7 +3,7 @@
 
 use super::api::{ApiDb, Entry};
 use super::context::{Ctx, completion_context};
-use super::lex::KEYWORDS;
+use super::lex::{KEYWORDS, Tok, tokenize};
 use super::symbols::SymbolIndex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,12 +63,30 @@ impl CompletionProvider {
         src: &str,
         cursor: usize,
     ) -> Vec<Completion> {
+        // Don't offer suggestions while typing inside a string or comment.
+        if in_literal(src, cursor) {
+            return Vec::new();
+        }
         match completion_context(src, cursor) {
             Ctx::Member { base, prefix, .. } => member_completions(db, idx, &base, &prefix),
             Ctx::Ident { prefix, .. } => ident_completions(db, idx, &prefix),
             Ctx::None => Vec::new(),
         }
     }
+}
+
+/// Whether `byte` sits within a string or comment token (where completion is
+/// unwanted).
+fn in_literal(src: &str, byte: usize) -> bool {
+    tokenize(src).iter().any(|t| {
+        if !matches!(t.kind, Tok::Str { .. } | Tok::Comment) || byte <= t.start {
+            return false;
+        }
+        // For open literals (comments, unterminated strings) the cursor may sit
+        // right at the end and still be "inside".
+        let open = matches!(t.kind, Tok::Comment | Tok::Str { terminated: false });
+        byte < t.end || (open && byte == t.end)
+    })
 }
 
 fn matches(name: &str, prefix: &str) -> bool {
@@ -201,6 +219,15 @@ mod tests {
         let idx = SymbolIndex::build(src);
         let list = CompletionProvider.completions(&db, &idx, src, src.len());
         assert!(labels(&list).contains(&"speed"));
+    }
+
+    #[test]
+    fn no_completions_inside_strings() {
+        let db = ApiDb::load();
+        let idx = SymbolIndex::default();
+        let src = "local s = \"Vec2.ne";
+        let list = CompletionProvider.completions(&db, &idx, src, src.len());
+        assert!(list.is_empty(), "should not complete inside a string: {list:?}");
     }
 
     #[test]

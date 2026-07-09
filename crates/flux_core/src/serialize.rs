@@ -87,6 +87,8 @@ impl World {
                 .ok_or_else(|| CoreError::Load(format!("dangling instance ref {serial}")))?;
             world.set_prop(id, prop, Value::InstanceRef(Some(target)))?;
         }
+        // Older scenes may predate a service (e.g. `Scripts`); add any missing.
+        world.ensure_services();
         Ok(world)
     }
 }

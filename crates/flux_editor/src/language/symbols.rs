@@ -36,7 +36,8 @@ pub struct Symbol {
     pub type_hint: Option<String>,
     /// 1-based line of the declaration.
     pub line: usize,
-    /// Byte offset of the declaration name.
+    /// Byte offset of the declaration name (for future go-to-definition).
+    #[allow(dead_code)]
     pub byte: usize,
 }
 

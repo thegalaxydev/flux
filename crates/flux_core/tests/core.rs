@@ -292,3 +292,32 @@ fn sample_sprite_scene_loads() {
     let xf = flux_core::SpriteXform::read(&w, spinner).unwrap();
     assert!((xf.rotation - 30.0).abs() < 1e-3);
 }
+
+#[test]
+fn new_world_has_scripts_service() {
+    let w = World::new();
+    let scripts = w.scripts().expect("Scripts service should exist");
+    assert_eq!(w.class_name(scripts), Some("Scripts"));
+    // GetService-style lookup resolves it by class name.
+    assert_eq!(w.service("Scripts"), Some(scripts));
+}
+
+#[test]
+fn loading_legacy_scene_gains_scripts_service() {
+    // A scene authored before the Scripts service existed (Workspace + Gui only)
+    // should gain one on load, so top-level scripts have a home everywhere.
+    let json = r#"{
+        "version": 1,
+        "root": {
+            "class": "Game",
+            "name": "Game",
+            "children": [
+                { "class": "Workspace", "name": "Workspace" },
+                { "class": "Gui", "name": "Gui" }
+            ]
+        }
+    }"#;
+    let w = World::from_json(json).expect("load legacy scene");
+    assert!(w.scripts().is_some(), "Scripts service should be auto-added on load");
+    assert!(w.service("Storage").is_some(), "Storage service should be auto-added on load");
+}

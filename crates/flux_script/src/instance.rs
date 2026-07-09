@@ -274,7 +274,13 @@ fn lua_to_value(expected: ValueType, v: &LuaValue) -> Result<Value, &'static str
     let got = v.type_name();
     match expected {
         ValueType::Bool => v.as_boolean().map(Value::Bool).ok_or(got),
-        ValueType::Number => v.as_number().map(Value::Number).ok_or(got),
+        // Accept both Luau number and integer values (a whole-number literal like
+        // `0` arrives as an integer).
+        ValueType::Number => v
+            .as_number()
+            .or_else(|| v.as_integer().map(|i| i as f64))
+            .map(Value::Number)
+            .ok_or(got),
         ValueType::String => v
             .as_string()
             .map(|s| Value::String(s.to_string_lossy()))

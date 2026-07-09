@@ -51,8 +51,21 @@ impl World {
             .set_prop(workspace, "CurrentCamera", Value::InstanceRef(Some(camera)))
             .unwrap();
         world.spawn("Storage", root);
+        world.spawn("Scripts", root);
         world.spawn("Gui", root);
         world
+    }
+
+    /// Create any standard singleton service container missing from the tree.
+    /// Called after loading so older scenes gain newer services (e.g. `Scripts`)
+    /// automatically, the way engine services are implicit.
+    pub fn ensure_services(&mut self) {
+        let root = self.root;
+        for name in ["Storage", "Scripts", "Gui"] {
+            if self.service(name).is_none() {
+                self.spawn(name, root);
+            }
+        }
     }
 
     pub(crate) fn spawn(&mut self, class_name: &str, parent: InstanceId) -> InstanceId {
@@ -269,6 +282,10 @@ impl World {
 
     pub fn gui(&self) -> Option<InstanceId> {
         self.service("Gui")
+    }
+
+    pub fn scripts(&self) -> Option<InstanceId> {
+        self.service("Scripts")
     }
 }
 

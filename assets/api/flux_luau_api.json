@@ -189,6 +189,9 @@
   "services": {
     "Input": "InputService",
     "Workspace": "Instance",
+    "Storage": "Instance",
+    "Scripts": "Instance",
+    "Gui": "Instance",
     "DataStoreService": "DataStoreService",
     "Players": "Players",
     "RunService": "RunService"

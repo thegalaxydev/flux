@@ -588,6 +588,7 @@ fn icon_for(world: &World, id: InstanceId, open: bool) -> Icon {
         "Game" => Icon::Project,
         "Workspace" => Icon::World,
         "Storage" => Icon::Package,
+        "Scripts" => Icon::Scripting,
         "Folder" => {
             if open {
                 Icon::FolderOpen

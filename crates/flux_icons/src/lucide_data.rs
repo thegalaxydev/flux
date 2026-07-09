@@ -15,6 +15,7 @@ pub fn svg(name: &str) -> Option<&'static str> {
         "code" => Some(include_str!("../assets/lucide/code.svg")),
         "component" => Some(include_str!("../assets/lucide/component.svg")),
         "copy" => Some(include_str!("../assets/lucide/copy.svg")),
+        "dot" => Some(include_str!("../assets/lucide/dot.svg")),
         "download" => Some(include_str!("../assets/lucide/download.svg")),
         "eye-off" => Some(include_str!("../assets/lucide/eye-off.svg")),
         "eye" => Some(include_str!("../assets/lucide/eye.svg")),
@@ -87,4 +88,4 @@ pub fn svg(name: &str) -> Option<&'static str> {
 }
 
 #[allow(dead_code)]
-pub const COUNT: usize = 81;
+pub const COUNT: usize = 82;

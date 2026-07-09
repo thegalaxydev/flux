@@ -67,6 +67,7 @@ impl LucideProvider {
             Icon::Add => "plus",
             Icon::Remove => "minus",
             Icon::Close => "x",
+            Icon::Modified => "dot",
             Icon::Download => "download",
             Icon::Upload => "upload",
             Icon::Lock => "lock",

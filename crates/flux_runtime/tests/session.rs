@@ -364,3 +364,23 @@ fn missing_script_file_logs_error() {
     let logs = session.drain_logs();
     assert!(logs.iter().any(|l| l.level == LogLevel::Error));
 }
+
+#[test]
+fn scripts_in_the_scripts_container_run() {
+    // A Script parented under the top-level Scripts service should run without
+    // being attached to Workspace/Gui/Storage.
+    let mut w = World::new();
+    let scripts = w.scripts().expect("Scripts service");
+    let s = w.create("Script", scripts).unwrap();
+    w.set_prop(s, "SourcePath", Value::Asset("scripts/top_level.luau".to_string()))
+        .unwrap();
+    let json = w.to_json();
+
+    let session = Session::from_scene_json(&json, fixtures()).unwrap();
+    let logs = session.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.level == LogLevel::Info && l.message == "top-level ran under Scripts"),
+        "top-level script did not run: {logs:?}"
+    );
+}

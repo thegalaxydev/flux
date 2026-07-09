@@ -1,10 +1,17 @@
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{
-    self, Align2, Color32, FontId, Key, Sense, TextBuffer, TextEdit, TextFormat, Ui,
-    text::LayoutJob, vec2,
+    self, Align2, Color32, Event, FontId, Key, Pos2, Rect, Sense, Stroke, TextBuffer, TextEdit,
+    TextFormat, Ui, pos2,
+    text::{CCursor, CCursorRange, LayoutJob},
+    text_edit::TextEditState,
+    vec2,
 };
 use flux_icons::{Icon, Icons};
+
+use crate::language::{
+    Completion, CompletionKind, Diagnostic, DiagnosticSeverity, ScriptLanguageService,
+};
 
 const MIN_FONT: f32 = 9.0;
 const MAX_FONT: f32 = 28.0;
@@ -15,6 +22,39 @@ pub struct ScriptEditor {
     pub font_size: f32,
     pub find: FindState,
     pub pending_close: Option<usize>,
+    /// IDE features (completion, hover, signature help, diagnostics).
+    pub assist: Assist,
+}
+
+/// Language-service state plus the transient UI state of the completion popup.
+pub struct Assist {
+    pub svc: ScriptLanguageService,
+    /// Suggestions currently offered for the active token.
+    completions: Vec<Completion>,
+    selected: usize,
+    /// Byte offset of the token the current suggestions are anchored to; when
+    /// the cursor moves to a different token the session resets.
+    anchor: Option<usize>,
+    /// True after the user pressed Escape to dismiss the current session.
+    dismissed: bool,
+    /// Whether the popup was shown last frame (drives key interception).
+    visible: bool,
+    /// Last known 1-based (line, column) of the cursor, for the status readout.
+    cursor_lc: (usize, usize),
+}
+
+impl Default for Assist {
+    fn default() -> Self {
+        Self {
+            svc: ScriptLanguageService::default(),
+            completions: Vec::new(),
+            selected: 0,
+            anchor: None,
+            dismissed: false,
+            visible: false,
+            cursor_lc: (1, 1),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -31,13 +71,17 @@ pub struct FindState {
     pub focus: bool,
 }
 
+/// A 1-based (line, column) source location.
+pub type Loc = (usize, usize);
+
 pub struct ScriptTab {
     pub rel: String,
     pub abs: PathBuf,
     pub name: String,
     pub buffer: String,
     pub saved: String,
-    pub goto_line: Option<usize>,
+    /// Pending cursor jump (from go-to-error or find), applied on next draw.
+    pub goto: Option<Loc>,
 }
 
 impl ScriptTab {
@@ -54,6 +98,7 @@ impl Default for ScriptEditor {
             font_size: 14.0,
             find: FindState::default(),
             pending_close: None,
+            assist: Assist::default(),
         }
     }
 }
@@ -67,11 +112,11 @@ impl ScriptEditor {
         self.tabs.iter().any(|t| t.dirty())
     }
 
-    pub fn open(&mut self, rel: &str, root: &Path, line: Option<usize>) {
+    pub fn open(&mut self, rel: &str, root: &Path, loc: Option<Loc>) {
         if let Some(idx) = self.tabs.iter().position(|t| t.rel == rel) {
             self.active = ActiveTab::Script(idx);
-            if let Some(l) = line {
-                self.tabs[idx].goto_line = Some(l);
+            if let Some(l) = loc {
+                self.tabs[idx].goto = Some(l);
             }
             return;
         }
@@ -87,7 +132,7 @@ impl ScriptEditor {
             name,
             buffer: source.clone(),
             saved: source,
-            goto_line: line,
+            goto: loc,
         });
         self.active = ActiveTab::Script(self.tabs.len() - 1);
     }
@@ -155,7 +200,7 @@ pub fn tab_strip(ui: &mut Ui, editor: &mut ScriptEditor, icons: &Icons) {
         for i in 0..editor.tabs.len() {
             let tab = &editor.tabs[i];
             let selected = editor.active == ActiveTab::Script(i);
-            let label = format!("{}{}", tab.name, if tab.dirty() { " ●" } else { "" });
+            let dirty = tab.dirty();
 
             // Reserve a slot behind the tab so the label and close button share one
             // background (filled once we know the tab's hover state and bounds).
@@ -164,8 +209,17 @@ pub fn tab_strip(ui: &mut Ui, editor: &mut ScriptEditor, icons: &Icons) {
             let inner = ui.horizontal(|ui| {
                 ui.add_space(4.0);
                 label_clicked = ui
-                    .add(egui::Label::new(label).selectable(false).sense(Sense::click()))
+                    .add(egui::Label::new(&tab.name).selectable(false).sense(Sense::click()))
                     .clicked();
+                // Unsaved-changes dot, drawn with the same lucide pipeline as the
+                // rest of the UI (the plain `●` char renders as tofu in egui's font).
+                if dirty {
+                    icons
+                        .icon(Icon::Modified)
+                        .size(10.0)
+                        .show(ui)
+                        .on_hover_text("Unsaved changes");
+                }
                 if icons
                     .icon(Icon::Close)
                     .size(11.0)
@@ -208,16 +262,30 @@ pub fn code_area(
     tab: &mut ScriptTab,
     font_size: &mut f32,
     find: &mut FindState,
+    assist: &mut Assist,
     icons: &Icons,
 ) {
     let size = *font_size;
     let font = FontId::monospace(size);
     let row_h = ui.fonts(|f| f.row_height(&font));
+    let ctx = ui.ctx().clone();
 
-    // Header: find bar (when open) + font-size stepper.
+    // Diagnostics for this buffer (cached by the service; cheap when unchanged).
+    let diags: Vec<Diagnostic> = assist.svc.diagnostics(&tab.buffer).to_vec();
+    let errors = diags.iter().filter(|d| d.severity == DiagnosticSeverity::Error).count();
+    let warnings = diags
+        .iter()
+        .filter(|d| d.severity == DiagnosticSeverity::Warning)
+        .count();
+
+    // When the completion popup is open, steal navigation keys before the
+    // TextEdit consumes them (so arrows/Enter/Tab drive the popup, not the text).
+    let nav = if assist.visible { intercept_nav(ui) } else { Nav::default() };
+
+    // Header: find bar (when open) + font stepper + cursor/diagnostic readout.
     ui.horizontal(|ui| {
         if find.open {
-            ui.label("🔍");
+            icons.icon(Icon::Search).size(14.0).show(ui);
             let resp = ui.add(TextEdit::singleline(&mut find.query).desired_width(180.0));
             if find.focus {
                 resp.request_focus();
@@ -242,6 +310,15 @@ pub fn code_area(
             if ui.small_button("A-").clicked() {
                 *font_size = (*font_size - 1.0).clamp(MIN_FONT, MAX_FONT);
             }
+            ui.separator();
+            let (line, col) = assist.cursor_lc;
+            ui.label(format!("Ln {line}, Col {col}"));
+            if errors > 0 {
+                ui.colored_label(C_ERR, format!("● {errors}")).on_hover_text("errors");
+            }
+            if warnings > 0 {
+                ui.colored_label(C_WARN, format!("▲ {warnings}")).on_hover_text("warnings");
+            }
         });
     });
 
@@ -249,41 +326,129 @@ pub fn code_area(
     let digits = line_count.max(1).to_string().len();
     let gutter_w = digits as f32 * size * 0.62 + 12.0;
 
+    // Worst diagnostic severity per (1-based) line, for gutter colouring.
+    let mut line_sev: std::collections::HashMap<usize, DiagnosticSeverity> =
+        std::collections::HashMap::new();
+    for d in &diags {
+        line_sev
+            .entry(d.start.line)
+            .and_modify(|s| {
+                if sev_rank(d.severity) > sev_rank(*s) {
+                    *s = d.severity;
+                }
+            })
+            .or_insert(d.severity);
+    }
+
+    let edit_id = ui.make_persistent_id(("script_code", &tab.rel));
+    let mut area_out: Option<AreaOut> = None;
+
     ui.horizontal_top(|ui| {
         let (gutter_rect, _) =
             ui.allocate_exact_size(vec2(gutter_w, ui.available_height()), Sense::hover());
 
-        let goto = tab.goto_line.take();
+        let goto = tab.goto.take();
         let mut area = egui::ScrollArea::both().auto_shrink([false, false]);
-        if let Some(line) = goto {
+        if let Some((line, _)) = goto {
             area = area.vertical_scroll_offset((line.saturating_sub(1)) as f32 * row_h);
         }
         let out = area.show(ui, |ui| {
+            // Reserve a shape *behind* the text for line/bracket highlights.
+            let behind = ui.painter().add(egui::Shape::Noop);
+
             let mut layouter = |ui: &Ui, buf: &dyn TextBuffer, _wrap: f32| {
                 let job = highlight(buf.as_str(), size);
                 ui.fonts(|f| f.layout_job(job))
             };
-            ui.add(
-                TextEdit::multiline(&mut tab.buffer)
-                    .font(font.clone())
-                    .code_editor()
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(30)
-                    .lock_focus(true)
-                    .layouter(&mut layouter),
-            )
-        });
+            let o = TextEdit::multiline(&mut tab.buffer)
+                .id(edit_id)
+                .font(font.clone())
+                .code_editor()
+                .desired_width(f32::INFINITY)
+                .desired_rows(30)
+                .lock_focus(true)
+                .layouter(&mut layouter)
+                .show(ui);
 
+            // Apply a pending go-to (error/find): move the cursor to (line, col).
+            if let Some((line, col)) = goto {
+                let target = line_col_to_char(&tab.buffer, line, col);
+                let mut st = o.state.clone();
+                st.cursor
+                    .set_char_range(Some(CCursorRange::one(CCursor::new(target))));
+                st.store(ui.ctx(), edit_id);
+                ui.ctx().memory_mut(|m| m.request_focus(edit_id));
+            }
+
+            let galley = o.galley.clone();
+            let gpos = o.galley_pos;
+            let cursor_char = o.cursor_range.map(|c| c.primary.index);
+            let cursor_rect = o
+                .cursor_range
+                .map(|c| galley.pos_from_cursor(c.primary).translate(gpos.to_vec2()));
+            let hover_char = o
+                .response
+                .hover_pos()
+                .map(|p| galley.cursor_from_pos(p - gpos).index);
+
+            // Line + matching-bracket highlight, drawn behind the text.
+            let mut shapes: Vec<egui::Shape> = Vec::new();
+            if let Some(rect) = cursor_rect {
+                let width = ui.clip_rect().width().max(galley.size().x);
+                let full = Rect::from_min_max(
+                    pos2(gpos.x, rect.min.y),
+                    pos2(gpos.x + width, rect.max.y),
+                );
+                shapes.push(egui::Shape::rect_filled(
+                    full,
+                    egui::CornerRadius::ZERO,
+                    line_highlight(ui),
+                ));
+            }
+            if let Some(cb) = cursor_char.map(|c| crate::language::byte_of_char(&tab.buffer, c)) {
+                if let Some((a, b)) = matching_bracket(&tab.buffer, cb) {
+                    for pos in [a, b] {
+                        if let Some(r) = glyph_rect(&galley, &tab.buffer, pos) {
+                            shapes.push(egui::Shape::rect_stroke(
+                                r.translate(gpos.to_vec2()),
+                                egui::CornerRadius::same(2),
+                                Stroke::new(1.0, ui.visuals().text_color()),
+                                egui::StrokeKind::Inside,
+                            ));
+                        }
+                    }
+                }
+            }
+            if !shapes.is_empty() {
+                ui.painter().set(behind, egui::Shape::Vec(shapes));
+            }
+
+            // Diagnostic underlines, on top (squiggle for error/warn/info,
+            // dotted for hints).
+            let painter = ui.painter();
+            for d in &diags {
+                draw_diagnostic_underline(&painter, &galley, gpos, &tab.buffer, d);
+            }
+
+            AreaOut { response: o.response, cursor_char, cursor_rect, hover_char }
+        });
+        area_out = Some(out.inner);
+
+        // Gutter line numbers (coloured where a line has a diagnostic).
         let offset = out.state.offset.y;
         let painter = ui.painter_at(gutter_rect);
-        let color = ui.visuals().weak_text_color();
+        let weak = ui.visuals().weak_text_color();
         for line in 0..line_count {
             let y = gutter_rect.top() + 2.0 + line as f32 * row_h - offset;
             if y + row_h < gutter_rect.top() || y > gutter_rect.bottom() {
                 continue;
             }
+            let color = match line_sev.get(&(line + 1)) {
+                Some(s) => severity_color(*s),
+                None => weak,
+            };
             painter.text(
-                egui::pos2(gutter_rect.right() - 6.0, y),
+                pos2(gutter_rect.right() - 6.0, y),
                 Align2::RIGHT_TOP,
                 (line + 1).to_string(),
                 font.clone(),
@@ -291,6 +456,514 @@ pub fn code_area(
             );
         }
     });
+
+    let Some(area) = area_out else { return };
+
+    if let Some(cc) = area.cursor_char {
+        let byte = crate::language::byte_of_char(&tab.buffer, cc);
+        assist.cursor_lc = crate::language::line_col(&tab.buffer, byte);
+    }
+
+    // --- Completion session -------------------------------------------------
+    let mut mutated = false;
+    if let Some(cursor_char) = area.cursor_char {
+        let cursor_b = crate::language::byte_of_char(&tab.buffer, cursor_char);
+        let anchor = token_start(&tab.buffer, cursor_b);
+        if assist.anchor != Some(anchor) {
+            assist.anchor = Some(anchor);
+            assist.selected = 0;
+            assist.dismissed = false;
+        }
+        assist.completions = assist.svc.completions(&tab.buffer, cursor_char);
+        if assist.selected >= assist.completions.len() {
+            assist.selected = 0;
+        }
+        let n = assist.completions.len();
+        if n > 0 {
+            if nav.down {
+                assist.selected = (assist.selected + 1) % n;
+            }
+            if nav.up {
+                assist.selected = (assist.selected + n - 1) % n;
+            }
+        }
+        if nav.dismiss {
+            assist.dismissed = true;
+        }
+
+        let show = n > 0 && !assist.dismissed && area.response.has_focus();
+        let clicked = if show {
+            let pos = area
+                .cursor_rect
+                .map(|r| r.left_bottom() + vec2(-4.0, 2.0))
+                .unwrap_or(area.response.rect.left_top());
+            completion_popup(&ctx, edit_id.with("completions"), pos, &assist.completions, assist.selected)
+        } else {
+            None
+        };
+
+        let accept = if (nav.accept || nav.commit.is_some()) && show {
+            Some(assist.selected)
+        } else {
+            clicked
+        };
+        if let Some(i) = accept {
+            if let Some(c) = assist.completions.get(i) {
+                let mut insert = c.insert.clone();
+                if let Some(sep) = nav.commit {
+                    insert.push(sep);
+                }
+                let new_char = accept_completion(&mut tab.buffer, cursor_char, &insert);
+                let mut st = TextEditState::load(&ctx, edit_id).unwrap_or_default();
+                st.cursor
+                    .set_char_range(Some(CCursorRange::one(CCursor::new(new_char))));
+                st.store(&ctx, edit_id);
+                ctx.memory_mut(|m| m.request_focus(edit_id));
+                assist.completions.clear();
+                if nav.commit.is_some() {
+                    // Committed on `.`/`:` — reopen member suggestions next frame.
+                    assist.anchor = None;
+                    assist.dismissed = false;
+                } else {
+                    // Plain accept — keep the popup closed until the token changes.
+                    let nb = crate::language::byte_of_char(&tab.buffer, new_char);
+                    assist.anchor = Some(token_start(&tab.buffer, nb));
+                    assist.dismissed = true;
+                }
+                mutated = true;
+                ctx.request_repaint();
+            }
+        }
+        assist.visible = show && !mutated;
+    } else {
+        assist.completions.clear();
+        assist.visible = false;
+        assist.anchor = None;
+    }
+
+    // --- Signature help -----------------------------------------------------
+    if !mutated {
+        if let (Some(cc), Some(rect)) = (area.cursor_char, area.cursor_rect) {
+            if let Some(sig) = assist.svc.signature(&tab.buffer, cc) {
+                signature_popup(&ctx, edit_id.with("signature"), rect, &sig);
+            }
+        }
+    }
+
+    // --- Hover --------------------------------------------------------------
+    // A squiggle takes priority: hovering it shows every overlapping diagnostic.
+    // Otherwise fall back to symbol hover (type/doc).
+    if !mutated && !assist.visible && area.response.hovered() {
+        if let (Some(hc), Some(pos)) = (area.hover_char, area.response.hover_pos()) {
+            let byte = crate::language::byte_of_char(&tab.buffer, hc);
+            let hovered: Vec<&Diagnostic> =
+                diags.iter().filter(|d| d.range().contains(&byte)).collect();
+            if !hovered.is_empty() {
+                diagnostic_popup(&ctx, pos, &hovered);
+            } else if let Some(h) = assist.svc.hover(&tab.buffer, hc) {
+                hover_popup(&ctx, pos, &h);
+            }
+        }
+    }
+}
+
+/// Result of drawing the code TextEdit, needed for the IDE overlays.
+struct AreaOut {
+    response: egui::Response,
+    cursor_char: Option<usize>,
+    cursor_rect: Option<Rect>,
+    hover_char: Option<usize>,
+}
+
+#[derive(Default)]
+struct Nav {
+    up: bool,
+    down: bool,
+    accept: bool,
+    dismiss: bool,
+    /// A `.`/`:` that should commit the selection and reopen member suggestions.
+    commit: Option<char>,
+}
+
+/// Consume completion-navigation keys from the input queue so the TextEdit
+/// doesn't act on them this frame.
+fn intercept_nav(ui: &Ui) -> Nav {
+    ui.input_mut(|i| {
+        let mut nav = Nav::default();
+        i.events.retain(|e| match e {
+            Event::Key { key: Key::ArrowDown, pressed: true, .. } => {
+                nav.down = true;
+                false
+            }
+            Event::Key { key: Key::ArrowUp, pressed: true, .. } => {
+                nav.up = true;
+                false
+            }
+            Event::Key { key: Key::Enter | Key::Tab, pressed: true, .. } => {
+                nav.accept = true;
+                false
+            }
+            Event::Key { key: Key::Escape, pressed: true, .. } => {
+                nav.dismiss = true;
+                false
+            }
+            Event::Text(t) if t == "." || t == ":" => {
+                nav.commit = t.chars().next();
+                false
+            }
+            _ => true,
+        });
+        nav
+    })
+}
+
+/// Byte offset of the start of the identifier ending at `cursor`.
+fn token_start(src: &str, cursor: usize) -> usize {
+    let b = src.as_bytes();
+    let mut start = cursor.min(b.len());
+    while start > 0 && (b[start - 1].is_ascii_alphanumeric() || b[start - 1] == b'_') {
+        start -= 1;
+    }
+    start
+}
+
+/// Replace the identifier prefix ending at `cursor_char` with `insert`; returns
+/// the new cursor position (char index).
+fn accept_completion(buffer: &mut String, cursor_char: usize, insert: &str) -> usize {
+    let cursor_b = crate::language::byte_of_char(buffer, cursor_char);
+    let start_b = token_start(buffer, cursor_b);
+    buffer.replace_range(start_b..cursor_b, insert);
+    crate::language::char_of_byte(buffer, start_b + insert.len())
+}
+
+/// Char index of 1-based (line, col) in `src`.
+fn line_col_to_char(src: &str, line: usize, col: usize) -> usize {
+    let mut cur_line = 1;
+    let mut chars = 0usize;
+    for ch in src.chars() {
+        if cur_line >= line {
+            break;
+        }
+        if ch == '\n' {
+            cur_line += 1;
+        }
+        chars += 1;
+    }
+    (chars + col.saturating_sub(1)).min(src.chars().count())
+}
+
+/// Byte positions of the bracket adjacent to `cursor` and its match, if any.
+fn matching_bracket(src: &str, cursor: usize) -> Option<(usize, usize)> {
+    let b = src.as_bytes();
+    for cand in [cursor.checked_sub(1), (cursor < b.len()).then_some(cursor)]
+        .into_iter()
+        .flatten()
+    {
+        if let Some(m) = scan_match(b, cand) {
+            return Some((cand.min(m), cand.max(m)));
+        }
+    }
+    None
+}
+
+fn scan_match(b: &[u8], i: usize) -> Option<usize> {
+    const OPEN: &[u8; 3] = b"([{";
+    const CLOSE: &[u8; 3] = b")]}";
+    let c = b[i];
+    if let Some(k) = OPEN.iter().position(|&x| x == c) {
+        let close = CLOSE[k];
+        let mut depth = 0i32;
+        for (j, &ch) in b.iter().enumerate().skip(i) {
+            if ch == c {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(j);
+                }
+            }
+        }
+    } else if let Some(k) = CLOSE.iter().position(|&x| x == c) {
+        let open = OPEN[k];
+        let mut depth = 0i32;
+        let mut j = i as isize;
+        while j >= 0 {
+            let ch = b[j as usize];
+            if ch == c {
+                depth += 1;
+            } else if ch == open {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(j as usize);
+                }
+            }
+            j -= 1;
+        }
+    }
+    None
+}
+
+/// Galley-local rect of the single character at byte offset `byte`.
+fn glyph_rect(galley: &egui::Galley, src: &str, byte: usize) -> Option<Rect> {
+    let c0 = crate::language::char_of_byte(src, byte);
+    let r0 = galley.pos_from_cursor(CCursor::new(c0));
+    let r1 = galley.pos_from_cursor(CCursor::new(c0 + 1));
+    if (r1.min.y - r0.min.y).abs() > 1.0 {
+        return Some(r0);
+    }
+    Some(Rect::from_min_max(r0.min, pos2(r1.max.x, r0.max.y)))
+}
+
+fn sev_rank(s: DiagnosticSeverity) -> u8 {
+    match s {
+        DiagnosticSeverity::Hint => 0,
+        DiagnosticSeverity::Information => 1,
+        DiagnosticSeverity::Warning => 2,
+        DiagnosticSeverity::Error => 3,
+    }
+}
+
+fn severity_color(s: DiagnosticSeverity) -> Color32 {
+    match s {
+        DiagnosticSeverity::Error => C_ERR,
+        DiagnosticSeverity::Warning => C_WARN,
+        DiagnosticSeverity::Information => C_INFO,
+        DiagnosticSeverity::Hint => C_HINT,
+    }
+}
+
+fn draw_diagnostic_underline(
+    painter: &egui::Painter,
+    galley: &egui::Galley,
+    gpos: Pos2,
+    src: &str,
+    d: &Diagnostic,
+) {
+    let range = d.range();
+    let c0 = crate::language::char_of_byte(src, range.start);
+    let c1 = crate::language::char_of_byte(src, range.end);
+    let r0 = galley.pos_from_cursor(CCursor::new(c0));
+    let r1 = galley.pos_from_cursor(CCursor::new(c1));
+    let same_row = (r1.min.y - r0.min.y).abs() < 1.0;
+    let x0 = gpos.x + r0.min.x;
+    let x1 = (gpos.x + if same_row { r1.max.x } else { r0.max.x }).max(x0 + 4.0);
+    let y = gpos.y + r0.max.y - 1.0;
+    let color = severity_color(d.severity);
+    // Hints get a subtle dotted underline; everything else a squiggle.
+    if d.severity == DiagnosticSeverity::Hint {
+        draw_dotted(painter, x0, x1, y, color);
+    } else {
+        draw_squiggle(painter, x0, x1, y, color);
+    }
+}
+
+fn draw_squiggle(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
+    let mut pts = Vec::new();
+    let mut x = x0;
+    let mut up = false;
+    while x < x1 {
+        pts.push(pos2(x, if up { y - 2.0 } else { y }));
+        x += 3.0;
+        up = !up;
+    }
+    pts.push(pos2(x1, y));
+    if pts.len() >= 2 {
+        painter.add(egui::Shape::line(pts, Stroke::new(1.0, color)));
+    }
+}
+
+fn draw_dotted(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
+    let mut x = x0;
+    while x < x1 {
+        painter.line_segment([pos2(x, y), pos2((x + 1.5).min(x1), y)], Stroke::new(1.0, color));
+        x += 3.0;
+    }
+}
+
+fn line_highlight(ui: &Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        Color32::from_white_alpha(10)
+    } else {
+        Color32::from_black_alpha(12)
+    }
+}
+
+fn completion_popup(
+    ctx: &egui::Context,
+    id: egui::Id,
+    pos: Pos2,
+    list: &[Completion],
+    selected: usize,
+) -> Option<usize> {
+    let mut clicked = None;
+    egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos)
+        .constrain(true)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width(420.0);
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        for (i, c) in list.iter().enumerate() {
+                            let job = completion_job(ui, c);
+                            let resp = ui.selectable_label(i == selected, job);
+                            if resp.clicked() {
+                                clicked = Some(i);
+                            }
+                            if i == selected {
+                                resp.scroll_to_me(Some(egui::Align::Center));
+                            }
+                        }
+                    });
+                // Documentation for the highlighted suggestion.
+                if let Some(doc) = list.get(selected).map(|c| &c.doc).filter(|d| !d.is_empty()) {
+                    ui.separator();
+                    ui.add(egui::Label::new(egui::RichText::new(doc).size(12.0).weak()));
+                }
+            });
+        });
+    clicked
+}
+
+fn completion_job(ui: &Ui, c: &Completion) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let accent = kind_color(ui, c.kind);
+    let strong = ui.visuals().strong_text_color();
+    let weak = ui.visuals().weak_text_color();
+    job.append(
+        &format!("{:<5}", c.kind.glyph()),
+        0.0,
+        TextFormat { font_id: FontId::monospace(11.0), color: accent, ..Default::default() },
+    );
+    job.append(
+        &c.label,
+        0.0,
+        TextFormat { font_id: FontId::proportional(13.0), color: strong, ..Default::default() },
+    );
+    if !c.detail.is_empty() {
+        job.append(
+            &format!("    {}", c.detail),
+            0.0,
+            TextFormat { font_id: FontId::proportional(12.0), color: weak, ..Default::default() },
+        );
+    }
+    job
+}
+
+fn kind_color(ui: &Ui, kind: CompletionKind) -> Color32 {
+    let _ = ui;
+    match kind {
+        CompletionKind::Keyword => C_KEYWORD,
+        CompletionKind::Module => C_SERVICE,
+        CompletionKind::Function | CompletionKind::Method => C_FUNCTION,
+        CompletionKind::Event => C_SERVICE,
+        CompletionKind::Property => C_GLOBAL,
+        CompletionKind::Variable => C_DEFAULT,
+    }
+}
+
+fn signature_popup(
+    ctx: &egui::Context,
+    id: egui::Id,
+    cursor_rect: Rect,
+    sig: &crate::language::SignatureHelp,
+) {
+    egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(cursor_rect.left_top() + vec2(-4.0, -2.0))
+        .pivot(Align2::LEFT_BOTTOM)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width(460.0);
+                let mut job = LayoutJob::default();
+                let strong = ui.visuals().strong_text_color();
+                let weak = ui.visuals().weak_text_color();
+                let base = FontId::monospace(12.0);
+                job.append(
+                    &format!("{}(", sig.name),
+                    0.0,
+                    TextFormat { font_id: base.clone(), color: strong, ..Default::default() },
+                );
+                for (i, p) in sig.params.iter().enumerate() {
+                    if i > 0 {
+                        job.append(", ", 0.0, fmt(&base, weak));
+                    }
+                    let active = i == sig.active;
+                    let color = if active { C_FUNCTION } else { weak };
+                    let mut f = fmt(&base, color);
+                    if active {
+                        f.underline = Stroke::new(1.0, C_FUNCTION);
+                    }
+                    job.append(p, 0.0, f);
+                }
+                job.append(")", 0.0, fmt(&base, strong));
+                if let Some(ret) = &sig.returns {
+                    job.append(&format!(" -> {ret}"), 0.0, fmt(&base, weak));
+                }
+                ui.label(job);
+                if !sig.doc.is_empty() {
+                    ui.add(egui::Label::new(egui::RichText::new(&sig.doc).weak().size(12.0)));
+                }
+            });
+        });
+}
+
+fn hover_popup(ctx: &egui::Context, pos: Pos2, h: &crate::language::Hover) {
+    egui::Area::new(egui::Id::new("script_hover"))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(pos + vec2(12.0, 18.0))
+        .constrain(true)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width(420.0);
+                ui.label(
+                    egui::RichText::new(&h.title)
+                        .monospace()
+                        .color(ui.visuals().strong_text_color()),
+                );
+                if !h.doc.is_empty() {
+                    ui.add(egui::Label::new(egui::RichText::new(&h.doc).size(12.0)));
+                }
+            });
+        });
+}
+
+/// Tooltip listing every diagnostic under the pointer (a squiggle can carry
+/// several overlapping messages).
+fn diagnostic_popup(ctx: &egui::Context, pos: Pos2, diags: &[&Diagnostic]) {
+    egui::Area::new(egui::Id::new("script_diag_hover"))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(pos + vec2(12.0, 18.0))
+        .constrain(true)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width(460.0);
+                for (i, d) in diags.iter().enumerate() {
+                    if i > 0 {
+                        ui.separator();
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        ui.colored_label(severity_color(d.severity), severity_tag(d.severity));
+                        ui.label(&d.message);
+                    });
+                }
+            });
+        });
+}
+
+fn severity_tag(s: DiagnosticSeverity) -> &'static str {
+    match s {
+        DiagnosticSeverity::Error => "error",
+        DiagnosticSeverity::Warning => "warning",
+        DiagnosticSeverity::Information => "info",
+        DiagnosticSeverity::Hint => "hint",
+    }
+}
+
+fn fmt(font: &FontId, color: Color32) -> TextFormat {
+    TextFormat { font_id: font.clone(), color, ..Default::default() }
 }
 
 fn find_next(tab: &mut ScriptTab, find: &mut FindState) {
@@ -305,14 +978,14 @@ fn find_next(tab: &mut ScriptTab, find: &mut FindState) {
         .map(|p| start + p)
         .or_else(|| hay.find(&needle));
     if let Some(pos) = hit {
-        let line = tab.buffer[..pos].matches('\n').count() + 1;
-        tab.goto_line = Some(line);
+        let (line, col) = crate::language::line_col(&tab.buffer, pos);
+        tab.goto = Some((line, col));
         find.from = pos + needle.len();
     }
 }
 
-/// Parses `scripts/foo.luau:42: message` (Luau `@`-named chunks) into (path, line).
-pub fn parse_error_location(message: &str) -> Option<(String, usize)> {
+/// Parses `scripts/foo.luau:42: message` (or `:42:7:`) into (path, line, col).
+pub fn parse_error_location(message: &str) -> Option<(String, usize, usize)> {
     let marker = ".luau:";
     let idx = message.find(marker)?;
     let end = idx + ".luau".len();
@@ -325,9 +998,16 @@ pub fn parse_error_location(message: &str) -> Option<(String, usize)> {
         return None;
     }
     let rest = &message[end + 1..];
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    let line = digits.parse().ok()?;
-    Some((path, line))
+    let line_digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let line = line_digits.parse().ok()?;
+    // Optional `:col`.
+    let after = &rest[line_digits.len()..];
+    let col = after
+        .strip_prefix(':')
+        .map(|s| s.chars().take_while(|c| c.is_ascii_digit()).collect::<String>())
+        .and_then(|d| d.parse().ok())
+        .unwrap_or(1);
+    Some((path, line, col))
 }
 
 // --- Luau syntax highlighting -------------------------------------------------
@@ -340,6 +1020,10 @@ const C_COMMENT: Color32 = Color32::from_rgb(106, 153, 85);
 const C_GLOBAL: Color32 = Color32::from_rgb(86, 156, 214);
 const C_SERVICE: Color32 = Color32::from_rgb(78, 201, 176);
 const C_FUNCTION: Color32 = Color32::from_rgb(220, 220, 170);
+const C_ERR: Color32 = Color32::from_rgb(235, 100, 100);
+const C_WARN: Color32 = Color32::from_rgb(230, 190, 80);
+const C_INFO: Color32 = Color32::from_rgb(90, 160, 230);
+const C_HINT: Color32 = Color32::from_rgb(150, 150, 150);
 
 const KEYWORDS: &[&str] = &[
     "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
@@ -358,6 +1042,7 @@ const GLOBALS: &[&str] = &[
 const SERVICES: &[&str] = &[
     "Workspace",
     "Storage",
+    "Scripts",
     "Gui",
     "DataStoreService",
     "Players",
@@ -535,11 +1220,15 @@ mod tests {
     fn parses_luau_error_locations() {
         assert_eq!(
             parse_error_location("runtime error: scripts/movement.luau:42: attempt to index nil"),
-            Some(("scripts/movement.luau".to_string(), 42))
+            Some(("scripts/movement.luau".to_string(), 42, 1))
         );
         assert_eq!(
             parse_error_location("ui.luau:3: bad"),
-            Some(("ui.luau".to_string(), 3))
+            Some(("ui.luau".to_string(), 3, 1))
+        );
+        assert_eq!(
+            parse_error_location("scripts/a.luau:5:12: bad"),
+            Some(("scripts/a.luau".to_string(), 5, 12))
         );
         assert_eq!(parse_error_location("no location in this message"), None);
     }

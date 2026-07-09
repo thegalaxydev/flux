@@ -28,7 +28,9 @@ pub struct ApiDb {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct TypeDef {
+    /// Description of the type (reserved for future "hover on a type name").
     #[serde(default)]
+    #[allow(dead_code)]
     pub doc: String,
     #[serde(default)]
     pub members: IndexMap<String, Entry>,

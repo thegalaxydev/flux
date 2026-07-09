@@ -5,6 +5,7 @@ mod assets_panel;
 mod command;
 mod explorer;
 mod language;
+mod launcher;
 mod properties;
 mod script_editor;
 mod textures;
@@ -13,9 +14,13 @@ mod viewport;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
-use flux_core::{Color, Value, World};
+use flux_core::{Color, UDim2, Value, World};
+use flux_icons::Icons;
 use flux_render::LoadedImage;
 use glam::Vec2;
+
+use app::EditorApp;
+use launcher::{LaunchAction, Launcher, Recents};
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
@@ -44,22 +49,86 @@ fn main() -> eframe::Result {
         viewport,
         ..Default::default()
     };
-    let (world, path) = load_startup();
     eframe::run_native(
         "Flux",
         options,
-        Box::new(|_cc| Ok(Box::new(app::EditorApp::new(world, path)))),
+        Box::new(|_cc| Ok(Box::new(FluxApp::new()))),
     )
 }
 
-fn load_startup() -> (World, Option<PathBuf>) {
-    let path = PathBuf::from("projects/demo/main.scene.json");
-    if let Ok(json) = std::fs::read_to_string(&path) {
-        if let Ok(world) = World::from_json(&json) {
-            return (world, Some(path));
+/// Top-level app: shows the launcher until a project is chosen, then hands off
+/// to the editor. Returning "home" from the editor comes back here.
+struct FluxApp {
+    editor: Option<EditorApp>,
+    launcher: Launcher,
+    recents: Recents,
+    icons: Icons,
+    /// Last known editor project path, so in-editor Open/Save-As update recents.
+    tracked: Option<PathBuf>,
+}
+
+impl FluxApp {
+    fn new() -> Self {
+        FluxApp {
+            editor: None,
+            launcher: Launcher::default(),
+            recents: Recents::load(),
+            icons: Icons::lucide(),
+            tracked: None,
         }
     }
-    (demo_world(), None)
+
+    fn enter(&mut self, world: World, path: Option<PathBuf>) {
+        if let Some(p) = &path {
+            self.recents.push(p.clone());
+        }
+        self.tracked = path.clone();
+        self.launcher.error = None;
+        self.editor = Some(EditorApp::new(world, path));
+    }
+
+    fn open_path(&mut self, path: PathBuf) {
+        match std::fs::read_to_string(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|s| World::from_json(&s).map_err(|e| e.to_string()))
+        {
+            Ok(world) => self.enter(world, Some(path)),
+            Err(e) => {
+                self.launcher.error = Some(format!("Couldn't open {}: {e}", path.display()));
+            }
+        }
+    }
+}
+
+impl eframe::App for FluxApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.icons.sync_theme_from(&ctx.style().visuals);
+
+        if let Some(editor) = self.editor.as_mut() {
+            eframe::App::update(editor, ctx, frame);
+
+            // Reflect in-editor Open / Save As into the recent-projects list.
+            let current = editor.project_path().map(Path::to_path_buf);
+            if current != self.tracked {
+                self.tracked = current.clone();
+                if let Some(p) = current {
+                    self.recents.push(p);
+                }
+            }
+
+            if editor.take_go_home() {
+                self.editor = None;
+                self.tracked = None;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title("Flux".to_string()));
+            }
+        } else {
+            match self.launcher.ui(ctx, &self.icons, &self.recents) {
+                Some(LaunchAction::NewScene) => self.enter(World::new(), None),
+                Some(LaunchAction::Open(path)) => self.open_path(path),
+                None => {}
+            }
+        }
+    }
 }
 
 fn demo_world() -> World {
@@ -106,14 +175,14 @@ fn demo_world() -> World {
     let gui = w.gui().unwrap();
     let hud = w.create("Frame", gui).unwrap();
     w.set_name(hud, "HUD").unwrap();
-    w.set_prop(hud, "Position", Value::Vec2(Vec2::new(12.0, 12.0))).unwrap();
-    w.set_prop(hud, "Size", Value::Vec2(Vec2::new(240.0, 72.0))).unwrap();
+    w.set_prop(hud, "Position", Value::UDim2(UDim2::from_offset(12.0, 12.0))).unwrap();
+    w.set_prop(hud, "Size", Value::UDim2(UDim2::from_offset(240.0, 72.0))).unwrap();
     w.set_prop(hud, "BackgroundColor", Value::Color(Color::new(0.07, 0.08, 0.11, 0.85))).unwrap();
 
     let title = w.create("Label", gui).unwrap();
     w.set_name(title, "Title").unwrap();
-    w.set_prop(title, "Position", Value::Vec2(Vec2::new(24.0, 20.0))).unwrap();
-    w.set_prop(title, "Size", Value::Vec2(Vec2::new(216.0, 20.0))).unwrap();
+    w.set_prop(title, "Position", Value::UDim2(UDim2::from_offset(24.0, 20.0))).unwrap();
+    w.set_prop(title, "Size", Value::UDim2(UDim2::from_offset(216.0, 20.0))).unwrap();
     w.set_prop(title, "Text", Value::String("Flux — click the button".into())).unwrap();
     w.set_prop(title, "TextSize", Value::Number(15.0)).unwrap();
     w.set_prop(title, "BackgroundColor", Value::Color(Color::new(0.0, 0.0, 0.0, 0.0))).unwrap();
@@ -121,8 +190,8 @@ fn demo_world() -> World {
 
     let button = w.create("Button", gui).unwrap();
     w.set_name(button, "Btn").unwrap();
-    w.set_prop(button, "Position", Value::Vec2(Vec2::new(24.0, 46.0))).unwrap();
-    w.set_prop(button, "Size", Value::Vec2(Vec2::new(150.0, 26.0))).unwrap();
+    w.set_prop(button, "Position", Value::UDim2(UDim2::from_offset(24.0, 46.0))).unwrap();
+    w.set_prop(button, "Size", Value::UDim2(UDim2::from_offset(150.0, 26.0))).unwrap();
     w.set_prop(button, "Text", Value::String("Click me".into())).unwrap();
     w.set_prop(button, "BackgroundColor", Value::Color(Color::new(0.20, 0.45, 0.80, 1.0))).unwrap();
     w.set_prop(button, "ZIndex", Value::Number(1.0)).unwrap();
@@ -214,4 +283,19 @@ fn ground_texture() -> LoadedImage {
             ]
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The built-in starter scene (the fallback when `projects/demo` can't be
+    /// read) must build with valid property types and round-trip through JSON —
+    /// otherwise the editor panics on startup.
+    #[test]
+    fn demo_world_builds_and_round_trips() {
+        let world = demo_world();
+        let json = world.to_json();
+        World::from_json(&json).expect("demo world should re-load from its own JSON");
+    }
 }

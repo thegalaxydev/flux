@@ -99,6 +99,8 @@ impl ClassRegistry {
             vec![prop("CurrentCamera", Value::InstanceRef(None))],
         );
         reg.add("Storage", Some("Instance"), false, true, vec![]);
+        // Top-level home for Scripts that aren't attached to a specific object.
+        reg.add("Scripts", Some("Instance"), false, true, vec![]);
         reg.add("Folder", Some("Instance"), true, false, vec![]);
         reg.add(
             "Node2D",

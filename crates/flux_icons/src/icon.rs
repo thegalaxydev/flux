@@ -50,6 +50,8 @@ pub enum Icon {
     Add,
     Remove,
     Close,
+    /// Filled dot used to flag unsaved/modified state (e.g. dirty script tabs).
+    Modified,
     Download,
     Upload,
     Lock,
@@ -141,6 +143,7 @@ impl Icon {
         Icon::Add,
         Icon::Remove,
         Icon::Close,
+        Icon::Modified,
         Icon::Download,
         Icon::Upload,
         Icon::Lock,

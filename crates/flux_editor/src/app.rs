@@ -42,7 +42,7 @@ pub struct UiState {
     pub suppress_drag: bool,
     pub viewport_rect: egui::Rect,
     pub explorer: crate::explorer::ExplorerState,
-    pub open_script: Option<(String, Option<usize>)>,
+    pub open_script: Option<(String, Option<(usize, usize)>)>,
 }
 
 impl Default for UiState {
@@ -75,6 +75,8 @@ enum FileOp {
     Save,
     SaveAs,
     Exit,
+    /// Return to the launcher / recent-projects screen.
+    Home,
 }
 
 pub struct EditorApp {
@@ -93,6 +95,8 @@ pub struct EditorApp {
     script_warn: bool,
     allow_close: bool,
     title: String,
+    /// Set when the user asks to return to the launcher; the outer app drains it.
+    go_home: bool,
 }
 
 const SC_UNDO: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
@@ -124,7 +128,18 @@ impl EditorApp {
             script_warn: false,
             allow_close: false,
             title: String::new(),
+            go_home: false,
         }
+    }
+
+    /// The scene file currently open (if any), for the launcher's recent list.
+    pub fn project_path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// Consume a pending "return to launcher" request.
+    pub fn take_go_home(&mut self) -> bool {
+        std::mem::take(&mut self.go_home)
     }
 
     fn playing(&self) -> bool {
@@ -274,6 +289,14 @@ impl EditorApp {
         }
     }
 
+    fn active_scripts(&self) -> InstanceId {
+        let scripts = match &self.play {
+            Some(s) => s.world().borrow().scripts(),
+            None => self.world.scripts(),
+        };
+        scripts.unwrap_or_else(|| self.active_workspace())
+    }
+
     fn delete_selected(&mut self) {
         if let Some(id) = self.ui.selection {
             self.ui.queue.push(Pending {
@@ -294,7 +317,7 @@ impl EditorApp {
     }
 
     fn request(&mut self, ctx: &egui::Context, op: FileOp) {
-        if self.dirty && matches!(op, FileOp::New | FileOp::Open | FileOp::Exit) {
+        if self.dirty && matches!(op, FileOp::New | FileOp::Open | FileOp::Exit | FileOp::Home) {
             self.confirm = Some(op);
         } else {
             self.perform(ctx, op);
@@ -333,6 +356,10 @@ impl EditorApp {
             FileOp::Exit => {
                 self.allow_close = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            FileOp::Home => {
+                self.play = None;
+                self.go_home = true;
             }
         }
     }
@@ -466,6 +493,10 @@ impl EditorApp {
                             self.request(ctx, FileOp::Open);
                             ui.close();
                         }
+                        if ui.button("Recent Projects…").clicked() {
+                            self.request(ctx, FileOp::Home);
+                            ui.close();
+                        }
                         ui.separator();
                         if ui.button("Save\tCtrl+S").clicked() {
                             self.request(ctx, FileOp::Save);
@@ -523,9 +554,17 @@ impl EditorApp {
                     });
                 });
                 ui.menu_button("Insert", |ui| {
-                    let parent = self.ui.selection.unwrap_or_else(|| self.active_workspace());
                     for class in registry().creatable_classes() {
                         if ui.button(class.name).clicked() {
+                            // With nothing selected, Scripts default into the
+                            // Scripts container; everything else into Workspace.
+                            let parent = self.ui.selection.unwrap_or_else(|| {
+                                if class.name == "Script" {
+                                    self.active_scripts()
+                                } else {
+                                    self.active_workspace()
+                                }
+                            });
                             self.ui.queue.push(Pending {
                                 cmd: Command::create(class.name, parent),
                                 merge: false,
@@ -558,6 +597,20 @@ impl EditorApp {
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let playing = self.playing();
+
+                if self
+                    .icons
+                    .icon(Icon::Project)
+                    .size(18.0)
+                    .disabled(playing)
+                    .button(ui)
+                    .on_hover_text("Recent projects")
+                    .clicked()
+                    && !playing
+                {
+                    self.request(ctx, FileOp::Home);
+                }
+                ui.separator();
 
                 if self
                     .icons
@@ -709,7 +762,7 @@ impl EditorApp {
 
     fn output_panel(&mut self, ctx: &egui::Context) {
         let mut clear = false;
-        let mut open_request: Option<(String, Option<usize>)> = None;
+        let mut open_request: Option<(String, Option<(usize, usize)>)> = None;
         egui::TopBottomPanel::bottom("output")
             .resizable(true)
             .default_height(110.0)
@@ -751,7 +804,7 @@ impl EditorApp {
                                         crate::script_editor::parse_error_location(&entry.message)
                                     })
                                     .flatten();
-                                if let Some((path, line)) = location {
+                                if let Some((path, line, col)) = location {
                                     if ui
                                         .add(egui::Label::new(
                                             egui::RichText::new(&entry.message)
@@ -762,7 +815,7 @@ impl EditorApp {
                                         .on_hover_text("Open in Script Editor")
                                         .clicked()
                                     {
-                                        open_request = Some((path, Some(line)));
+                                        open_request = Some((path, Some((line, col))));
                                     }
                                 } else {
                                     ui.colored_label(color, &entry.message);
@@ -1027,6 +1080,7 @@ impl eframe::App for EditorApp {
                                 tab,
                                 &mut editor.font_size,
                                 &mut editor.find,
+                                &mut editor.assist,
                                 icons,
                             );
                         }
