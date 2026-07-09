@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.dependencies]
+flux_core = { path = "crates/flux_core" }
+flux_render = { path = "crates/flux_render" }
+flux_script = { path = "crates/flux_script" }
+flux_runtime = { path = "crates/flux_runtime" }
+flux_icons = { path = "crates/flux_icons" }
+flux_view = { path = "crates/flux_view" }
+flux_data = { path = "crates/flux_data" }
+glam = "0.33"
+indexmap = { version = "2", features = ["serde"] }
+mlua = { version = "0.11", features = ["luau", "vendored"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+slotmap = "1"
+thiserror = "2"
+
+[profile.dev]
+opt-level = 1

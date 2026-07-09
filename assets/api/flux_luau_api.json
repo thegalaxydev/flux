@@ -1,0 +1,346 @@
+{
+  "_comment": "Built-in Luau API metadata for the Flux script editor (autocomplete, hover, signature help). Kinds: library | variable | function | method | property | event. `type` is the value type an expression evaluates to; `returns` is a function/method's result type; `members` on a global are inline (library namespace). Mirror crates/flux_script and types/flux.d.luau when editing.",
+
+  "globals": {
+    "game": {
+      "kind": "variable",
+      "type": "Instance",
+      "doc": "The root of the running experience. Use `game:GetService(name)` to reach engine services and `game.Heartbeat` for a per-frame event."
+    },
+    "workspace": {
+      "kind": "variable",
+      "type": "Instance",
+      "doc": "The Workspace: the container for the 2D scene (Sprites, Nodes). Shortcut for `game:GetService(\"Workspace\")`."
+    },
+    "script": {
+      "kind": "variable",
+      "type": "Instance",
+      "doc": "The Script instance this code runs as. `script.Parent` is the object containing this script."
+    },
+    "Input": {
+      "kind": "variable",
+      "type": "InputService",
+      "doc": "Keyboard and mouse input. Equivalent to `game:GetService(\"Input\")`."
+    },
+    "print": {
+      "kind": "function",
+      "params": [{ "name": "...", "type": "any" }],
+      "returns": "()",
+      "doc": "Writes its arguments to the Output console, separated by spaces."
+    },
+    "warn": {
+      "kind": "function",
+      "params": [{ "name": "...", "type": "any" }],
+      "returns": "()",
+      "doc": "Writes a warning (yellow) line to the Output console."
+    },
+    "error": {
+      "kind": "function",
+      "params": [{ "name": "message", "type": "any" }, { "name": "level", "type": "number?" }],
+      "returns": "()",
+      "doc": "Raises an error, halting the current thread with `message`."
+    },
+    "assert": {
+      "kind": "function",
+      "params": [{ "name": "value", "type": "any" }, { "name": "message", "type": "any?" }],
+      "returns": "any",
+      "doc": "Errors with `message` if `value` is nil or false; otherwise returns its arguments."
+    },
+    "pcall": {
+      "kind": "function",
+      "params": [{ "name": "fn", "type": "function" }, { "name": "...", "type": "any" }],
+      "returns": "(boolean, ...any)",
+      "doc": "Calls `fn` in protected mode. Returns `true, results...` on success or `false, err` on error."
+    },
+    "tostring": {
+      "kind": "function",
+      "params": [{ "name": "value", "type": "any" }],
+      "returns": "string",
+      "doc": "Converts any value to a string."
+    },
+    "tonumber": {
+      "kind": "function",
+      "params": [{ "name": "value", "type": "any" }, { "name": "base", "type": "number?" }],
+      "returns": "number?",
+      "doc": "Converts `value` to a number, or returns nil if it cannot be converted."
+    },
+    "typeof": {
+      "kind": "function",
+      "params": [{ "name": "value", "type": "any" }],
+      "returns": "string",
+      "doc": "Returns the type name of `value`, including engine types like \"Vector2\"."
+    },
+    "pairs": {
+      "kind": "function",
+      "params": [{ "name": "t", "type": "table" }],
+      "returns": "(function, table, any)",
+      "doc": "Iterates over all key/value pairs of a table: `for k, v in pairs(t) do`."
+    },
+    "ipairs": {
+      "kind": "function",
+      "params": [{ "name": "t", "type": "table" }],
+      "returns": "(function, table, number)",
+      "doc": "Iterates over the array part of a table in order: `for i, v in ipairs(t) do`."
+    },
+    "require": {
+      "kind": "function",
+      "params": [{ "name": "module", "type": "Instance | string" }],
+      "returns": "any",
+      "doc": "Loads a ModuleScript and returns the value it returns."
+    },
+
+    "Vec2": {
+      "kind": "library",
+      "doc": "2D vector library.",
+      "members": {
+        "new": { "kind": "function", "params": [{ "name": "x", "type": "number?" }, { "name": "y", "type": "number?" }], "returns": "Vec2", "doc": "Creates a 2D vector: Vec2.new(x, y)." },
+        "zero": { "kind": "property", "type": "Vec2", "doc": "The zero vector (0, 0)." },
+        "one": { "kind": "property", "type": "Vec2", "doc": "The one vector (1, 1)." }
+      }
+    },
+    "Color": {
+      "kind": "library",
+      "doc": "RGBA color library. Components are 0..1.",
+      "members": {
+        "new": { "kind": "function", "params": [{ "name": "r", "type": "number?" }, { "name": "g", "type": "number?" }, { "name": "b", "type": "number?" }, { "name": "a", "type": "number?" }], "returns": "Color", "doc": "Creates a color: Color.new(r, g, b, a)." }
+      }
+    },
+    "UDim": {
+      "kind": "library",
+      "doc": "One axis of a UDim2: scale (fraction of parent) + offset (pixels).",
+      "members": {
+        "new": { "kind": "function", "params": [{ "name": "scale", "type": "number?" }, { "name": "offset", "type": "number?" }], "returns": "UDim", "doc": "Creates a UDim: UDim.new(scale, offset)." }
+      }
+    },
+    "UDim2": {
+      "kind": "library",
+      "doc": "Roblox-style 2D size/position used by GuiObjects: scale + offset on each axis.",
+      "members": {
+        "new": { "kind": "function", "params": [{ "name": "xScale", "type": "number?" }, { "name": "xOffset", "type": "number?" }, { "name": "yScale", "type": "number?" }, { "name": "yOffset", "type": "number?" }], "returns": "UDim2", "doc": "Creates a UDim2: UDim2.new(xScale, xOffset, yScale, yOffset)." },
+        "fromScale": { "kind": "function", "params": [{ "name": "xScale", "type": "number?" }, { "name": "yScale", "type": "number?" }], "returns": "UDim2", "doc": "A UDim2 with only scale components: UDim2.fromScale(xScale, yScale)." },
+        "fromOffset": { "kind": "function", "params": [{ "name": "xOffset", "type": "number?" }, { "name": "yOffset", "type": "number?" }], "returns": "UDim2", "doc": "A UDim2 with only pixel offsets: UDim2.fromOffset(xOffset, yOffset)." }
+      }
+    },
+    "Enum": {
+      "kind": "library",
+      "doc": "Container for all engine enumerations.",
+      "members": {
+        "KeyCode": { "kind": "property", "type": "EnumKeyCode", "doc": "Keyboard keys, e.g. Enum.KeyCode.Space." },
+        "UserInputType": { "kind": "property", "type": "EnumUserInputType", "doc": "Kinds of input, e.g. Enum.UserInputType.MouseButton1." }
+      }
+    },
+    "task": {
+      "kind": "library",
+      "doc": "Cooperative scheduler.",
+      "members": {
+        "wait": { "kind": "function", "params": [{ "name": "seconds", "type": "number?" }], "returns": "number", "doc": "Yields the current thread for `seconds` (default one frame) and returns the elapsed time." },
+        "spawn": { "kind": "function", "params": [{ "name": "fn", "type": "function" }, { "name": "...", "type": "any" }], "returns": "thread", "doc": "Runs `fn` immediately on a new thread." },
+        "defer": { "kind": "function", "params": [{ "name": "fn", "type": "function" }, { "name": "...", "type": "any" }], "returns": "thread", "doc": "Runs `fn` on a new thread at the end of the current frame." }
+      }
+    },
+    "math": {
+      "kind": "library",
+      "doc": "Math functions and constants.",
+      "members": {
+        "abs": { "kind": "function", "params": [{ "name": "x", "type": "number" }], "returns": "number", "doc": "Absolute value of x." },
+        "ceil": { "kind": "function", "params": [{ "name": "x", "type": "number" }], "returns": "number", "doc": "Rounds x up to the nearest integer." },
+        "floor": { "kind": "function", "params": [{ "name": "x", "type": "number" }], "returns": "number", "doc": "Rounds x down to the nearest integer." },
+        "clamp": { "kind": "function", "params": [{ "name": "x", "type": "number" }, { "name": "min", "type": "number" }, { "name": "max", "type": "number" }], "returns": "number", "doc": "Clamps x to the range [min, max]." },
+        "max": { "kind": "function", "params": [{ "name": "...", "type": "number" }], "returns": "number", "doc": "Largest of its arguments." },
+        "min": { "kind": "function", "params": [{ "name": "...", "type": "number" }], "returns": "number", "doc": "Smallest of its arguments." },
+        "random": { "kind": "function", "params": [{ "name": "m", "type": "number?" }, { "name": "n", "type": "number?" }], "returns": "number", "doc": "Random number: no args -> [0,1); (m) -> [1,m]; (m,n) -> [m,n]." },
+        "sqrt": { "kind": "function", "params": [{ "name": "x", "type": "number" }], "returns": "number", "doc": "Square root of x." },
+        "sin": { "kind": "function", "params": [{ "name": "x", "type": "number" }], "returns": "number", "doc": "Sine of x (radians)." },
+        "cos": { "kind": "function", "params": [{ "name": "x", "type": "number" }], "returns": "number", "doc": "Cosine of x (radians)." },
+        "rad": { "kind": "function", "params": [{ "name": "deg", "type": "number" }], "returns": "number", "doc": "Converts degrees to radians." },
+        "deg": { "kind": "function", "params": [{ "name": "rad", "type": "number" }], "returns": "number", "doc": "Converts radians to degrees." },
+        "huge": { "kind": "property", "type": "number", "doc": "Positive infinity." },
+        "pi": { "kind": "property", "type": "number", "doc": "The constant pi." }
+      }
+    },
+    "string": {
+      "kind": "library",
+      "doc": "String functions.",
+      "members": {
+        "format": { "kind": "function", "params": [{ "name": "fmt", "type": "string" }, { "name": "...", "type": "any" }], "returns": "string", "doc": "printf-style string formatting." },
+        "len": { "kind": "function", "params": [{ "name": "s", "type": "string" }], "returns": "number", "doc": "Length of the string in bytes." },
+        "sub": { "kind": "function", "params": [{ "name": "s", "type": "string" }, { "name": "i", "type": "number" }, { "name": "j", "type": "number?" }], "returns": "string", "doc": "Substring from i to j (1-based, inclusive)." },
+        "upper": { "kind": "function", "params": [{ "name": "s", "type": "string" }], "returns": "string", "doc": "Uppercase copy of s." },
+        "lower": { "kind": "function", "params": [{ "name": "s", "type": "string" }], "returns": "string", "doc": "Lowercase copy of s." },
+        "find": { "kind": "function", "params": [{ "name": "s", "type": "string" }, { "name": "pattern", "type": "string" }, { "name": "init", "type": "number?" }], "returns": "(number?, number?)", "doc": "Finds the first match of a pattern in s." },
+        "gsub": { "kind": "function", "params": [{ "name": "s", "type": "string" }, { "name": "pattern", "type": "string" }, { "name": "repl", "type": "any" }], "returns": "(string, number)", "doc": "Replaces matches of a pattern; returns the result and match count." },
+        "split": { "kind": "function", "params": [{ "name": "s", "type": "string" }, { "name": "sep", "type": "string?" }], "returns": "{string}", "doc": "Splits s by the separator into an array of strings." }
+      }
+    },
+    "table": {
+      "kind": "library",
+      "doc": "Table functions.",
+      "members": {
+        "insert": { "kind": "function", "params": [{ "name": "t", "type": "table" }, { "name": "value", "type": "any" }], "returns": "()", "doc": "Appends value to the array part of t (or inserts at a position)." },
+        "remove": { "kind": "function", "params": [{ "name": "t", "type": "table" }, { "name": "pos", "type": "number?" }], "returns": "any", "doc": "Removes and returns the element at pos (default last)." },
+        "find": { "kind": "function", "params": [{ "name": "t", "type": "table" }, { "name": "value", "type": "any" }], "returns": "number?", "doc": "Returns the index of value in t, or nil." },
+        "sort": { "kind": "function", "params": [{ "name": "t", "type": "table" }, { "name": "comp", "type": "function?" }], "returns": "()", "doc": "Sorts t in place, optionally by a comparator." },
+        "clear": { "kind": "function", "params": [{ "name": "t", "type": "table" }], "returns": "()", "doc": "Removes all entries from t." },
+        "concat": { "kind": "function", "params": [{ "name": "t", "type": "table" }, { "name": "sep", "type": "string?" }], "returns": "string", "doc": "Joins the array part of t into a string." }
+      }
+    }
+  },
+
+  "services": {
+    "Input": "InputService",
+    "Workspace": "Instance",
+    "DataStoreService": "DataStoreService",
+    "Players": "Players",
+    "RunService": "RunService"
+  },
+
+  "types": {
+    "Instance": {
+      "doc": "Base class for every object in the scene tree.",
+      "members": {
+        "Name": { "kind": "property", "type": "string", "doc": "The name of this object." },
+        "ClassName": { "kind": "property", "type": "string", "doc": "The class name of this object, e.g. \"Sprite\"." },
+        "Parent": { "kind": "property", "type": "Instance", "doc": "The object containing this one, or nil." },
+        "Position": { "kind": "property", "type": "Vec2", "doc": "2D position of this object." },
+        "Size": { "kind": "property", "type": "Vec2", "doc": "2D size of this object." },
+        "Rotation": { "kind": "property", "type": "number", "doc": "Rotation of this object, in degrees." },
+        "Visible": { "kind": "property", "type": "boolean", "doc": "Whether this object is drawn." },
+        "AbsolutePosition": { "kind": "property", "type": "Vec2", "doc": "GuiObject only: computed top-left pixel position against the viewport." },
+        "AbsoluteSize": { "kind": "property", "type": "Vec2", "doc": "GuiObject only: computed pixel size against the viewport." },
+        "Heartbeat": { "kind": "event", "type": "Signal", "doc": "Frame update event. Connect(function(dt) ... end)." },
+        "Activated": { "kind": "event", "type": "Signal", "doc": "Fires on a Button when it is clicked. Connect(function() ... end)." },
+        "GetService": { "kind": "method", "params": [{ "name": "name", "type": "string" }], "returns": "Instance", "doc": "Returns the engine service with the given name, e.g. game:GetService(\"DataStoreService\")." },
+        "FindFirstChild": { "kind": "method", "params": [{ "name": "name", "type": "string" }], "returns": "Instance", "doc": "Returns the first child named `name`, or nil." },
+        "GetChildren": { "kind": "method", "params": [], "returns": "{Instance}", "doc": "Returns an array of this object's direct children." },
+        "GetDescendants": { "kind": "method", "params": [], "returns": "{Instance}", "doc": "Returns an array of all descendants of this object." },
+        "IsA": { "kind": "method", "params": [{ "name": "className", "type": "string" }], "returns": "boolean", "doc": "Returns true if this object is of the given class (or a subclass)." },
+        "Clone": { "kind": "method", "params": [], "returns": "Instance", "doc": "Returns a deep copy of this object." },
+        "Destroy": { "kind": "method", "params": [], "returns": "()", "doc": "Removes this object from the scene and frees it." },
+        "GetTouchingSprites": { "kind": "method", "params": [], "returns": "{Instance}", "doc": "Sprite only: returns sprites overlapping this one in the workspace." }
+      }
+    },
+    "Vec2": {
+      "doc": "A 2D vector.",
+      "members": {
+        "X": { "kind": "property", "type": "number", "doc": "X component." },
+        "Y": { "kind": "property", "type": "number", "doc": "Y component." },
+        "Magnitude": { "kind": "property", "type": "number", "doc": "Length of the vector." },
+        "Unit": { "kind": "property", "type": "Vec2", "doc": "The vector scaled to length 1." }
+      }
+    },
+    "Color": {
+      "doc": "An RGBA color, components 0..1.",
+      "members": {
+        "R": { "kind": "property", "type": "number", "doc": "Red component (0..1)." },
+        "G": { "kind": "property", "type": "number", "doc": "Green component (0..1)." },
+        "B": { "kind": "property", "type": "number", "doc": "Blue component (0..1)." },
+        "A": { "kind": "property", "type": "number", "doc": "Alpha/opacity (0..1)." }
+      }
+    },
+    "UDim": {
+      "doc": "One axis of a UDim2.",
+      "members": {
+        "Scale": { "kind": "property", "type": "number", "doc": "Fraction of the parent's size." },
+        "Offset": { "kind": "property", "type": "number", "doc": "Pixel offset." }
+      }
+    },
+    "UDim2": {
+      "doc": "A 2D size/position with scale and offset on each axis.",
+      "members": {
+        "X": { "kind": "property", "type": "UDim", "doc": "Horizontal axis." },
+        "Y": { "kind": "property", "type": "UDim", "doc": "Vertical axis." },
+        "Width": { "kind": "property", "type": "UDim", "doc": "Alias for X." },
+        "Height": { "kind": "property", "type": "UDim", "doc": "Alias for Y." }
+      }
+    },
+    "EnumItem": {
+      "doc": "A single value of an enumeration, e.g. Enum.KeyCode.Space.",
+      "members": {
+        "Name": { "kind": "property", "type": "string", "doc": "The name of this enum item." },
+        "Value": { "kind": "property", "type": "number", "doc": "The numeric value of this enum item." },
+        "EnumType": { "kind": "property", "type": "string", "doc": "The name of the enum this item belongs to." }
+      }
+    },
+    "EnumKeyCode": {
+      "doc": "Keyboard keys.",
+      "members": {
+        "A": { "kind": "property", "type": "EnumItem", "doc": "The A key." },
+        "W": { "kind": "property", "type": "EnumItem", "doc": "The W key." },
+        "S": { "kind": "property", "type": "EnumItem", "doc": "The S key." },
+        "D": { "kind": "property", "type": "EnumItem", "doc": "The D key." },
+        "Space": { "kind": "property", "type": "EnumItem", "doc": "The spacebar." },
+        "Return": { "kind": "property", "type": "EnumItem", "doc": "The Enter/Return key." },
+        "Escape": { "kind": "property", "type": "EnumItem", "doc": "The Escape key." },
+        "Up": { "kind": "property", "type": "EnumItem", "doc": "The up arrow key." },
+        "Down": { "kind": "property", "type": "EnumItem", "doc": "The down arrow key." },
+        "Left": { "kind": "property", "type": "EnumItem", "doc": "The left arrow key." },
+        "Right": { "kind": "property", "type": "EnumItem", "doc": "The right arrow key." },
+        "GetEnumItems": { "kind": "method", "params": [], "returns": "{EnumItem}", "doc": "Returns all items of this enum as an array." }
+      }
+    },
+    "EnumUserInputType": {
+      "doc": "Kinds of input.",
+      "members": {
+        "MouseButton1": { "kind": "property", "type": "EnumItem", "doc": "The left mouse button." },
+        "MouseButton2": { "kind": "property", "type": "EnumItem", "doc": "The right mouse button." },
+        "MouseButton3": { "kind": "property", "type": "EnumItem", "doc": "The middle mouse button." },
+        "Keyboard": { "kind": "property", "type": "EnumItem", "doc": "Keyboard input." },
+        "Touch": { "kind": "property", "type": "EnumItem", "doc": "Touch input." },
+        "GetEnumItems": { "kind": "method", "params": [], "returns": "{EnumItem}", "doc": "Returns all items of this enum as an array." }
+      }
+    },
+    "Signal": {
+      "doc": "An event you can subscribe to.",
+      "members": {
+        "Connect": { "kind": "method", "params": [{ "name": "callback", "type": "function" }], "returns": "Connection", "doc": "Connects a callback to this event. Returns a Connection you can Disconnect." },
+        "Wait": { "kind": "method", "params": [], "returns": "...any", "doc": "Yields the current thread until the event next fires, returning its arguments." }
+      }
+    },
+    "Connection": {
+      "doc": "A live event subscription.",
+      "members": {
+        "Disconnect": { "kind": "method", "params": [], "returns": "()", "doc": "Stops the callback from being called again." },
+        "Connected": { "kind": "property", "type": "boolean", "doc": "Whether this connection is still active." }
+      }
+    },
+    "InputService": {
+      "doc": "Keyboard and mouse input service.",
+      "members": {
+        "IsKeyDown": { "kind": "function", "params": [{ "name": "key", "type": "EnumItem | string" }], "returns": "boolean", "doc": "Returns true while the key is held down. Accepts Enum.KeyCode values or key names." },
+        "IsMouseDown": { "kind": "function", "params": [{ "name": "button", "type": "EnumItem | string" }], "returns": "boolean", "doc": "Returns true while the mouse button is held down." },
+        "MousePosition": { "kind": "function", "params": [], "returns": "Vec2", "doc": "The current mouse position in viewport pixels." },
+        "ViewportSize": { "kind": "function", "params": [], "returns": "Vec2", "doc": "The size of the viewport in pixels." }
+      }
+    },
+    "RunService": {
+      "doc": "Frame-timing service.",
+      "members": {
+        "Heartbeat": { "kind": "event", "type": "Signal", "doc": "Fires every frame with the delta time. Connect(function(dt) ... end)." }
+      }
+    },
+    "Players": {
+      "doc": "The players service.",
+      "members": {
+        "GetPlayers": { "kind": "method", "params": [], "returns": "{Instance}", "doc": "Returns an array of the players currently in the game." },
+        "LocalPlayer": { "kind": "property", "type": "Instance", "doc": "The player on this client." }
+      }
+    },
+    "DataStoreService": {
+      "doc": "Persistent key/value storage service. Get it with game:GetService(\"DataStoreService\").",
+      "members": {
+        "GetDataStore": { "kind": "method", "params": [{ "name": "name", "type": "string" }, { "name": "scope", "type": "string?" }], "returns": "DataStore", "doc": "Returns a named DataStore for reading and writing values." }
+      }
+    },
+    "DataStore": {
+      "doc": "A persistent key/value store.",
+      "members": {
+        "GetAsync": { "kind": "method", "params": [{ "name": "key", "type": "string" }], "returns": "any", "doc": "Reads and returns the value stored at `key`, or nil." },
+        "SetAsync": { "kind": "method", "params": [{ "name": "key", "type": "string" }, { "name": "value", "type": "any" }], "returns": "()", "doc": "Writes `value` to `key`, overwriting any existing value." },
+        "UpdateAsync": { "kind": "method", "params": [{ "name": "key", "type": "string" }, { "name": "transform", "type": "function" }], "returns": "any", "doc": "Atomically updates `key`: calls transform(old) and stores its return value." },
+        "IncrementAsync": { "kind": "method", "params": [{ "name": "key", "type": "string" }, { "name": "delta", "type": "number?" }], "returns": "number", "doc": "Adds `delta` (default 1) to the number stored at `key` and returns the new value." },
+        "RemoveAsync": { "kind": "method", "params": [{ "name": "key", "type": "string" }], "returns": "any", "doc": "Removes `key` and returns the value that was stored there." },
+        "ListKeysAsync": { "kind": "method", "params": [], "returns": "{string}", "doc": "Returns an array of all keys in this store." }
+      }
+    }
+  }
+}

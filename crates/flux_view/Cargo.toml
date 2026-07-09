@@ -1,0 +1,10 @@
+[package]
+name = "flux_view"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+egui = "0.32"
+glam.workspace = true
+flux_core.workspace = true
+flux_render.workspace = true

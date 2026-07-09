@@ -1,0 +1,4 @@
+{
+  "languageMode": "nonstrict",
+  "globals": ["game", "workspace", "script", "Vec2", "Color", "UDim", "UDim2", "Enum", "Input", "task", "warn"]
+}

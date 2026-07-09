@@ -1,0 +1,9 @@
+[package]
+name = "flux_data"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json.workspace = true
+thiserror.workspace = true

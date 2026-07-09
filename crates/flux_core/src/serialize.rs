@@ -1,0 +1,179 @@
+use std::collections::HashMap;
+
+use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
+
+use crate::class::registry;
+use crate::error::CoreError;
+use crate::value::{Color, UDim2, Value};
+use crate::world::{InstanceId, World};
+
+pub const SCENE_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct SceneFile {
+    version: u32,
+    root: SavedInstance,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedInstance {
+    class: String,
+    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ref_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    props: IndexMap<String, SavedValue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    children: Vec<SavedInstance>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "t", content = "v")]
+enum SavedValue {
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Vec2([f32; 2]),
+    /// `[x_scale, x_offset, y_scale, y_offset]`.
+    UDim2([f32; 4]),
+    Color([f32; 4]),
+    Asset(String),
+    Ref(Option<u64>),
+}
+
+impl World {
+    pub fn to_json(&self) -> String {
+        let mut ref_ids: HashMap<InstanceId, u64> = HashMap::new();
+        let mut next = 0u64;
+        for id in self.descendants(self.root()) {
+            for (_, value) in self.props(id) {
+                if let Value::InstanceRef(Some(target)) = value {
+                    if self.contains(*target) && !ref_ids.contains_key(target) {
+                        ref_ids.insert(*target, next);
+                        next += 1;
+                    }
+                }
+            }
+        }
+        let scene = SceneFile {
+            version: SCENE_VERSION,
+            root: save_instance(self, self.root(), &ref_ids),
+        };
+        serde_json::to_string_pretty(&scene).unwrap()
+    }
+
+    pub fn from_json(json: &str) -> Result<World, CoreError> {
+        let scene: SceneFile =
+            serde_json::from_str(json).map_err(|e| CoreError::Load(e.to_string()))?;
+        if scene.version != SCENE_VERSION {
+            return Err(CoreError::Load(format!(
+                "unsupported scene version {}",
+                scene.version
+            )));
+        }
+        if scene.root.class != "Game" {
+            return Err(CoreError::Load("root instance must be a Game".to_string()));
+        }
+        let mut world = World::empty_game();
+        let mut refs: HashMap<u64, InstanceId> = HashMap::new();
+        let mut fixups: Vec<(InstanceId, &'static str, u64)> = Vec::new();
+        let root = world.root();
+        load_instance(&mut world, &scene.root, root, &mut refs, &mut fixups)?;
+        for (id, prop, serial) in fixups {
+            let target = refs
+                .get(&serial)
+                .copied()
+                .ok_or_else(|| CoreError::Load(format!("dangling instance ref {serial}")))?;
+            world.set_prop(id, prop, Value::InstanceRef(Some(target)))?;
+        }
+        Ok(world)
+    }
+}
+
+fn save_instance(
+    world: &World,
+    id: InstanceId,
+    ref_ids: &HashMap<InstanceId, u64>,
+) -> SavedInstance {
+    let info = registry().info(world.class_of(id).unwrap());
+    let mut props = IndexMap::new();
+    for pd in &info.props {
+        let value = world.get_prop(id, pd.name).unwrap();
+        if *value != pd.default {
+            props.insert(pd.name.to_string(), save_value(value, ref_ids));
+        }
+    }
+    SavedInstance {
+        class: info.name.to_string(),
+        name: world.name(id).unwrap().to_string(),
+        ref_id: ref_ids.get(&id).copied(),
+        props,
+        children: world
+            .children(id)
+            .iter()
+            .map(|&c| save_instance(world, c, ref_ids))
+            .collect(),
+    }
+}
+
+fn save_value(value: &Value, ref_ids: &HashMap<InstanceId, u64>) -> SavedValue {
+    match value {
+        Value::Bool(b) => SavedValue::Bool(*b),
+        Value::Number(n) => SavedValue::Number(*n),
+        Value::String(s) => SavedValue::String(s.clone()),
+        Value::Vec2(v) => SavedValue::Vec2([v.x, v.y]),
+        Value::UDim2(u) => {
+            SavedValue::UDim2([u.x.scale, u.x.offset, u.y.scale, u.y.offset])
+        }
+        Value::Color(c) => SavedValue::Color([c.r, c.g, c.b, c.a]),
+        Value::Asset(s) => SavedValue::Asset(s.clone()),
+        Value::InstanceRef(t) => SavedValue::Ref(t.and_then(|t| ref_ids.get(&t).copied())),
+    }
+}
+
+fn load_instance(
+    world: &mut World,
+    saved: &SavedInstance,
+    id: InstanceId,
+    refs: &mut HashMap<u64, InstanceId>,
+    fixups: &mut Vec<(InstanceId, &'static str, u64)>,
+) -> Result<(), CoreError> {
+    world.set_name_raw(id, saved.name.clone());
+    if let Some(r) = saved.ref_id {
+        refs.insert(r, id);
+    }
+    let class = world.class_of(id).unwrap();
+    let info = registry().info(class);
+    for (pname, sv) in &saved.props {
+        let Some(pd) = info.props.iter().find(|p| p.name == pname.as_str()) else {
+            continue;
+        };
+        match sv {
+            SavedValue::Ref(Some(serial)) => fixups.push((id, pd.name, *serial)),
+            _ => world.set_prop(id, pd.name, load_value(sv))?,
+        }
+    }
+    for child in &saved.children {
+        let cclass = registry()
+            .find(&child.class)
+            .ok_or_else(|| CoreError::UnknownClass(child.class.clone()))?;
+        let cid = world.spawn_raw(cclass, id);
+        load_instance(world, child, cid, refs, fixups)?;
+    }
+    Ok(())
+}
+
+fn load_value(sv: &SavedValue) -> Value {
+    match sv {
+        SavedValue::Bool(b) => Value::Bool(*b),
+        SavedValue::Number(n) => Value::Number(*n),
+        SavedValue::String(s) => Value::String(s.clone()),
+        SavedValue::Vec2([x, y]) => Value::Vec2(glam::Vec2::new(*x, *y)),
+        SavedValue::UDim2([xs, xo, ys, yo]) => Value::UDim2(UDim2::new(*xs, *xo, *ys, *yo)),
+        SavedValue::Color([r, g, b, a]) => Value::Color(Color::new(*r, *g, *b, *a)),
+        SavedValue::Asset(s) => Value::Asset(s.clone()),
+        SavedValue::Ref(None) => Value::InstanceRef(None),
+        SavedValue::Ref(Some(_)) => unreachable!(),
+    }
+}

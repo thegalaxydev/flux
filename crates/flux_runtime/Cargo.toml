@@ -1,0 +1,12 @@
+[package]
+name = "flux_runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+flux_core.workspace = true
+flux_data.workspace = true
+flux_script.workspace = true
+
+[dev-dependencies]
+glam.workspace = true
