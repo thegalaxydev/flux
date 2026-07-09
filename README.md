@@ -1,4 +1,5 @@
-# Flux
+# <img width="28" height="28" alt="flux" src="https://github.com/user-attachments/assets/01989c31-0d3c-4f86-a3dc-e845d87f37a8" /> Flux 
+
 
 [![Latest release](https://img.shields.io/github/v/release/thegalaxydev/flux?sort=semver&display_name=tag&label=release)](https://github.com/thegalaxydev/flux/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/thegalaxydev/flux/total)](https://github.com/thegalaxydev/flux/releases)
