@@ -1,0 +1,37 @@
+name: release
+
+# Build and publish binaries whenever a version tag is pushed, e.g.
+#   git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release -p flux_editor -p flux_player
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $pkg = "flux-${{ github.ref_name }}-windows-x64"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item target/release/flux_editor.exe $pkg
+          Copy-Item target/release/flux_player.exe $pkg
+          Copy-Item LICENSE $pkg
+          Compress-Archive -Path "$pkg/*" -DestinationPath "$pkg.zip"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: flux-*-windows-x64.zip
+          generate_release_notes: true

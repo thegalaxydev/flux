@@ -20,3 +20,9 @@ thiserror = "2"
 
 [profile.dev]
 opt-level = 1
+
+# Leaner, faster release binaries for distribution.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
