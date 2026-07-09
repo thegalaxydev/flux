@@ -1173,7 +1173,10 @@ dependencies = [
  "flux_runtime",
  "flux_view",
  "glam",
+ "indexmap",
  "rfd",
+ "serde",
+ "serde_json",
  "winresource",
 ]
 

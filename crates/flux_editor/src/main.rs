@@ -4,6 +4,7 @@ mod app;
 mod assets_panel;
 mod command;
 mod explorer;
+mod language;
 mod properties;
 mod script_editor;
 mod textures;
