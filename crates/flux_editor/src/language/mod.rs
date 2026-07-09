@@ -63,41 +63,46 @@ fn hash(src: &str) -> u64 {
 }
 
 impl ScriptLanguageService {
-    /// Rebuild the cached symbol index + diagnostics if `src` changed.
-    fn analyze(&mut self, src: &str) -> &Analysis {
+    /// Rebuild the cached symbol index + diagnostics if `src` changed. Kept as
+    /// a `()`-returning method so callers can then borrow `self.db` and the
+    /// cached index as disjoint fields.
+    fn analyze(&mut self, src: &str) {
         let h = hash(src);
         if self.analysis.as_ref().map(|a| a.hash) != Some(h) {
             let index = SymbolIndex::build(src);
             let diagnostics = self.diagnostics.diagnostics(&self.db, &index, src);
             self.analysis = Some(Analysis { hash: h, index, diagnostics });
         }
-        self.analysis.as_ref().unwrap()
     }
 
     /// Completion suggestions for the cursor at char index `char_cursor`.
     pub fn completions(&mut self, src: &str, char_cursor: usize) -> Vec<Completion> {
         let cursor = byte_of_char(src, char_cursor);
-        let a = self.analyze(src);
+        self.analyze(src);
+        let a = self.analysis.as_ref().unwrap();
         self.completion.completions(&self.db, &a.index, src, cursor)
     }
 
     /// Hover info for the char index `char_pos` (e.g. under the pointer).
     pub fn hover(&mut self, src: &str, char_pos: usize) -> Option<Hover> {
         let byte = byte_of_char(src, char_pos);
-        let a = self.analyze(src);
+        self.analyze(src);
+        let a = self.analysis.as_ref().unwrap();
         self.hover.hover(&self.db, &a.index, src, byte)
     }
 
     /// Signature help for the cursor at char index `char_cursor`.
     pub fn signature(&mut self, src: &str, char_cursor: usize) -> Option<SignatureHelp> {
         let cursor = byte_of_char(src, char_cursor);
-        let a = self.analyze(src);
+        self.analyze(src);
+        let a = self.analysis.as_ref().unwrap();
         self.signature.signature(&self.db, &a.index, src, cursor)
     }
 
     /// Diagnostics for `src` (cached until the text changes).
     pub fn diagnostics(&mut self, src: &str) -> &[Diagnostic] {
-        &self.analyze(src).diagnostics
+        self.analyze(src);
+        &self.analysis.as_ref().unwrap().diagnostics
     }
 }
 
