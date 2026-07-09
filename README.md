@@ -1,5 +1,9 @@
 # Flux
 
+[![Latest release](https://img.shields.io/github/v/release/thegalaxydev/flux?sort=semver&display_name=tag&label=release)](https://github.com/thegalaxydev/flux/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/thegalaxydev/flux/total)](https://github.com/thegalaxydev/flux/releases)
+[![License](https://img.shields.io/github/license/thegalaxydev/flux)](LICENSE)
+
 Flux is a small 2D game engine with a built-in editor. If you've used Roblox
 Studio, the shape of it will feel familiar: your game is a tree of objects,
 behaviour lives in Luau scripts attached to that tree, and you hit Play to try
