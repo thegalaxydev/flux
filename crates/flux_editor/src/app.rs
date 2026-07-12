@@ -556,10 +556,10 @@ impl EditorApp {
                 ui.menu_button("Insert", |ui| {
                     for class in registry().creatable_classes() {
                         if ui.button(class.name).clicked() {
-                            // With nothing selected, Scripts default into the
-                            // Scripts container; everything else into Workspace.
+                            // With nothing selected, Scripts/Modules default into
+                            // the Scripts container; everything else into Workspace.
                             let parent = self.ui.selection.unwrap_or_else(|| {
-                                if class.name == "Script" {
+                                if matches!(class.name, "Script" | "Module") {
                                     self.active_scripts()
                                 } else {
                                     self.active_workspace()

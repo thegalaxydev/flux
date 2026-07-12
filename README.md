@@ -119,6 +119,24 @@ What you get to work with:
   editor it writes to a throwaway in-memory database by default; flip "Persist
   playtest data" if you want it to survive a stop.
 
+### Reusing code with Modules
+
+A `Module` is a script that doesn't run on its own. It runs the first time
+something `require`s it, and its return value is cached and shared from then on —
+handy for config tables and shared helpers:
+
+```lua
+-- Scripts/Balance  (a Module)
+return { speed = 240, lives = 3 }
+
+-- any Script
+local balance = require(game.Scripts.Balance)
+print(balance.speed)
+```
+
+Requiring a module that (directly or indirectly) requires itself is an error, so
+cycles fail loudly instead of hanging.
+
 Type definitions for editors that use the Luau Language Server live in
 [`types/flux.d.luau`](types/flux.d.luau). There's more detail in
 [`docs/script_editor.md`](docs/script_editor.md),

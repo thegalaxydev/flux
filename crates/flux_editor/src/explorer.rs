@@ -573,6 +573,7 @@ fn drop_asset(state: &mut UiState, target: InstanceId, rel: &str) {
     let file = rel.rsplit(['/', '\\']).next().unwrap_or(rel);
     let (class, prop) = match classify(file, false) {
         AssetKind::Image => ("Sprite", "Texture"),
+        AssetKind::LuaModule => ("Module", "SourcePath"),
         AssetKind::LuaScript | AssetKind::Script => ("Script", "SourcePath"),
         _ => return,
     };
@@ -600,6 +601,7 @@ fn icon_for(world: &World, id: InstanceId, open: bool) -> Icon {
         "Node2D" => Icon::Component,
         "Sprite" => Icon::Sprite,
         "Script" => Icon::Script,
+        "Module" => Icon::LuaScript,
         "Gui" => Icon::Ui,
         "Frame" => Icon::Ui,
         "Label" => Icon::Font,

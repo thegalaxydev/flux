@@ -7,7 +7,7 @@ mod types;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use flux_core::{InstanceId, Value, World, registry};
@@ -109,6 +109,9 @@ impl ScriptHost {
         lua.set_app_data(button_signals.clone());
         lua.set_app_data(provider);
         lua.set_app_data(log.clone());
+        // Where `require` resolves Module source paths, and its result cache.
+        lua.set_app_data(ModuleRoot(script_root.to_path_buf()));
+        lua.set_app_data(ModuleCache::default());
 
         setup_globals(&lua, &world, &scheduler, &log).map_err(|e| e.to_string())?;
 
@@ -296,7 +299,92 @@ fn setup_globals(
             Ok(())
         })?,
     )?;
+    g.set("require", lua.create_function(require_module)?)?;
     Ok(())
+}
+
+/// Filesystem root that `require` resolves Module `SourcePath`s against.
+struct ModuleRoot(PathBuf);
+
+/// Cache of module results (Roblox semantics: a module runs once; every
+/// `require` of it returns the same value). `active` tracks modules mid-load so
+/// cyclic requires error instead of looping.
+#[derive(Default)]
+struct ModuleCache {
+    values: RefCell<HashMap<InstanceId, mlua::Value>>,
+    active: RefCell<HashSet<InstanceId>>,
+}
+
+/// `require(module)` — load a `Module` instance, run it once, and return the
+/// value it returns (cached thereafter).
+fn require_module(lua: &Lua, target: mlua::Value) -> mlua::Result<mlua::Value> {
+    let err = mlua::Error::RuntimeError;
+    let id = target
+        .as_userdata()
+        .and_then(|ud| ud.borrow::<LuaInstance>().ok())
+        .map(|i| i.0)
+        .ok_or_else(|| err("require expects a Module instance".to_string()))?;
+
+    // Validate the target and read its source path (short world borrow).
+    let (rel, name) = {
+        let rc = world_handle(lua);
+        let w = rc.borrow();
+        if !w.contains(id) {
+            return Err(err("require: that instance no longer exists".to_string()));
+        }
+        let name = w.name(id).unwrap_or("Module").to_string();
+        if w.class_name(id) != Some("Module") {
+            return Err(err(format!(
+                "require expects a Module, but '{name}' is a {}",
+                w.class_name(id).unwrap_or("?")
+            )));
+        }
+        match w.get_prop(id, "SourcePath") {
+            Some(Value::Asset(p)) if !p.is_empty() => (p.clone(), name),
+            _ => return Err(err(format!("module '{name}' has no SourcePath set"))),
+        }
+    };
+
+    let cache = lua
+        .app_data_ref::<ModuleCache>()
+        .expect("module cache missing");
+
+    // Already loaded?
+    if let Some(v) = cache.values.borrow().get(&id) {
+        return Ok(v.clone());
+    }
+    // Loading right now => cycle.
+    if cache.active.borrow().contains(&id) {
+        return Err(err(format!("cyclic require of module '{name}'")));
+    }
+
+    let root = lua
+        .app_data_ref::<ModuleRoot>()
+        .expect("module root missing")
+        .0
+        .clone();
+    let full = root.join(&rel);
+    let src = std::fs::read_to_string(&full)
+        .map_err(|e| err(format!("module '{name}': cannot read '{}': {e}", full.display())))?;
+
+    // Modules get the same environment shape as scripts (`script` + engine globals).
+    let env = lua.create_table()?;
+    env.set("script", LuaInstance(id))?;
+    let mt = lua.create_table()?;
+    mt.set("__index", lua.globals())?;
+    env.set_metatable(Some(mt))?;
+    let func = lua
+        .load(&src)
+        .set_name(format!("@{rel}"))
+        .set_environment(env)
+        .into_function()?;
+
+    cache.active.borrow_mut().insert(id);
+    let result = func.call::<mlua::Value>(());
+    cache.active.borrow_mut().remove(&id);
+    let value = result?;
+    cache.values.borrow_mut().insert(id, value.clone());
+    Ok(value)
 }
 
 pub(crate) fn input_handle(lua: &Lua) -> Rc<RefCell<InputState>> {

@@ -150,6 +150,14 @@ impl ClassRegistry {
                 prop("Enabled", Value::Bool(true)),
             ],
         );
+        // A Module is loaded on demand via `require`, not run automatically.
+        reg.add(
+            "Module",
+            Some("Instance"),
+            true,
+            false,
+            vec![prop("SourcePath", Value::Asset(String::new()))],
+        );
         reg.add("Gui", Some("Instance"), false, true, vec![]);
         reg.add(
             "GuiObject",

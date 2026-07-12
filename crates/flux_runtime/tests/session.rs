@@ -384,3 +384,62 @@ fn scripts_in_the_scripts_container_run() {
         "top-level script did not run: {logs:?}"
     );
 }
+
+// --- Modules (require) -----------------------------------------------------
+
+/// Build a world with the standard services plus the given (class, name, path)
+/// instances under the Scripts container.
+fn scene_with(items: &[(&str, &str, &str)]) -> String {
+    let mut w = World::new();
+    let scripts = w.scripts().expect("Scripts service");
+    for (class, name, path) in items {
+        let id = w.create(class, scripts).unwrap();
+        w.set_name(id, *name).unwrap();
+        w.set_prop(id, "SourcePath", Value::Asset(path.to_string())).unwrap();
+    }
+    w.to_json()
+}
+
+#[test]
+fn require_loads_a_module_once_and_caches_it() {
+    let json = scene_with(&[
+        ("Module", "Balance", "scripts/balance_module.luau"),
+        ("Script", "User", "scripts/use_module.luau"),
+    ]);
+    let session = Session::from_scene_json(&json, fixtures()).unwrap();
+    let logs = session.drain_logs();
+    let msgs: Vec<&str> = logs.iter().map(|l| l.message.as_str()).collect();
+
+    assert!(logs.iter().all(|l| l.level != LogLevel::Error), "unexpected error: {logs:?}");
+    // Module body ran exactly once despite two requires.
+    assert_eq!(msgs.iter().filter(|m| **m == "module loaded").count(), 1, "{msgs:?}");
+    assert!(msgs.contains(&"speed 240"), "module data not returned: {msgs:?}");
+    assert!(msgs.contains(&"same true"), "require should return the cached value: {msgs:?}");
+}
+
+#[test]
+fn modules_do_not_run_on_their_own() {
+    // A Module with no `require` must never execute at startup.
+    let json = scene_with(&[("Module", "Noisy", "scripts/noisy_module.luau")]);
+    let session = Session::from_scene_json(&json, fixtures()).unwrap();
+    let logs = session.drain_logs();
+    assert!(
+        logs.iter().all(|l| l.message != "SHOULD NOT RUN"),
+        "a Module was auto-run: {logs:?}"
+    );
+}
+
+#[test]
+fn cyclic_require_is_reported() {
+    let json = scene_with(&[
+        ("Module", "CycleA", "scripts/cycle_a.luau"),
+        ("Module", "CycleB", "scripts/cycle_b.luau"),
+        ("Script", "Start", "scripts/require_cycle.luau"),
+    ]);
+    let session = Session::from_scene_json(&json, fixtures()).unwrap();
+    let logs = session.drain_logs();
+    assert!(
+        logs.iter().any(|l| l.level == LogLevel::Error && l.message.contains("cyclic")),
+        "expected a cyclic-require error: {logs:?}"
+    );
+}

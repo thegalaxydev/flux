@@ -118,25 +118,43 @@ fn row(
         return;
     }
 
-    let is_script = matches!(kind, AssetKind::LuaScript | AssetKind::Script);
+    let is_script = matches!(kind, AssetKind::LuaScript | AssetKind::LuaModule | AssetKind::Script);
+    let label = display_name(name, kind);
 
-    // The label senses click+drag so the row can be both a drag source (into the
-    // scene/explorer) and double-clicked to open scripts.
-    let resp = ui
-        .horizontal(|ui| {
-            if kind == AssetKind::Image {
-                if let Some(tex) = textures.get(ui.ctx(), root, rel) {
-                    let sized = egui::load::SizedTexture::new(tex.id(), egui::vec2(18.0, 18.0));
-                    ui.add(egui::Image::new(sized));
-                } else {
-                    icons.icon(icon).size(16.0).show(ui);
-                }
-            } else {
-                icons.icon(icon).size(16.0).role(IconRole::Muted).show(ui);
-            }
-            ui.add(egui::Label::new(name).sense(egui::Sense::click_and_drag()))
-        })
-        .inner;
+    // The whole row is one interactive strip, so the entire thing is a drag
+    // source (into the scene/Explorer), double-click target, and right-click menu.
+    let full_w = ui.available_width();
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(full_w, 20.0), egui::Sense::click_and_drag());
+    if resp.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            2.0,
+            ui.visuals().widgets.hovered.bg_fill.gamma_multiply(0.45),
+        );
+    }
+
+    let icon_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 4.0, rect.center().y - 9.0),
+        egui::vec2(18.0, 18.0),
+    );
+    if kind == AssetKind::Image {
+        if let Some(tex) = textures.get(ui.ctx(), root, rel) {
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            ui.painter().image(tex.id(), icon_rect, uv, egui::Color32::WHITE);
+        } else {
+            icons.icon(icon).size(16.0).paint_at(ui, icon_rect);
+        }
+    } else {
+        icons.icon(icon).size(16.0).role(IconRole::Muted).paint_at(ui, icon_rect);
+    }
+    ui.painter().text(
+        egui::pos2(icon_rect.right() + 6.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        &label,
+        egui::FontId::proportional(13.0),
+        ui.visuals().text_color(),
+    );
 
     resp.dnd_set_drag_payload(AssetDrag(rel.to_string()));
 
@@ -179,6 +197,24 @@ fn join_rel(dir: &Path, name: &str) -> String {
     parts.join("/")
 }
 
+/// Display name for a file: scripts and modules are shown without their
+/// extension (`test.module.luau` -> `test`, `main.luau` -> `main`); everything
+/// else keeps its full name. The icon already conveys the kind.
+fn display_name(name: &str, kind: AssetKind) -> String {
+    let lower = name.to_ascii_lowercase();
+    let suffixes: &[&str] = match kind {
+        AssetKind::LuaModule => &[".module.luau", ".module.lua"],
+        AssetKind::LuaScript => &[".luau", ".lua"],
+        _ => return name.to_string(),
+    };
+    for suffix in suffixes {
+        if lower.ends_with(suffix) {
+            return name[..name.len() - suffix.len()].to_string();
+        }
+    }
+    name.to_string()
+}
+
 fn kind_icon(kind: AssetKind) -> Icon {
     match kind {
         AssetKind::Folder => Icon::Folder,
@@ -186,7 +222,8 @@ fn kind_icon(kind: AssetKind) -> Icon {
         AssetKind::Audio => Icon::Audio,
         AssetKind::Model => Icon::Mesh,
         AssetKind::Script => Icon::Script,
-        AssetKind::LuaScript => Icon::LuaScript,
+        AssetKind::LuaScript => Icon::Script,
+        AssetKind::LuaModule => Icon::LuaScript,
         AssetKind::RustModule => Icon::RustModule,
         AssetKind::Scene => Icon::Scene,
         AssetKind::Material => Icon::Material,
@@ -195,5 +232,21 @@ fn kind_icon(kind: AssetKind) -> Icon {
         AssetKind::Package => Icon::Package,
         AssetKind::Font => Icon::Font,
         AssetKind::Unknown => Icon::UnknownFile,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_name;
+    use flux_render::AssetKind;
+
+    #[test]
+    fn strips_script_and_module_extensions() {
+        assert_eq!(display_name("main.luau", AssetKind::LuaScript), "main");
+        assert_eq!(display_name("main.lua", AssetKind::LuaScript), "main");
+        assert_eq!(display_name("test.module.luau", AssetKind::LuaModule), "test");
+        assert_eq!(display_name("Util.Module.LUAU", AssetKind::LuaModule), "Util");
+        // Non-script files keep their full name.
+        assert_eq!(display_name("hero.png", AssetKind::Image), "hero.png");
     }
 }

@@ -200,3 +200,5 @@ declare workspace: Instance
 declare script: Instance
 
 declare function warn(...: any): ()
+-- Loads a Module instance and returns the value it returns (cached per module).
+declare function require(module: Instance): any

@@ -52,6 +52,9 @@ pub enum AssetKind {
     Model,
     Script,
     LuaScript,
+    /// A Luau file named `*.module.luau` — becomes a `Module` instance rather
+    /// than a `Script` when dropped into the scene.
+    LuaModule,
     RustModule,
     Scene,
     Material,
@@ -70,6 +73,10 @@ pub fn classify(name: &str, is_dir: bool) -> AssetKind {
     if lower.ends_with(".scene.json") {
         return AssetKind::Scene;
     }
+    // `*.module.luau` (or `.lua`) is a Module; a plain `*.luau` is a Script.
+    if lower.ends_with(".module.luau") || lower.ends_with(".module.lua") {
+        return AssetKind::LuaModule;
+    }
     let ext = lower.rsplit('.').next().unwrap_or("");
     match ext {
         "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "tga" => AssetKind::Image,
@@ -83,5 +90,22 @@ pub fn classify(name: &str, is_dir: bool) -> AssetKind {
         "fluxpkg" | "zip" => AssetKind::Package,
         "ttf" | "otf" => AssetKind::Font,
         _ => AssetKind::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AssetKind, classify};
+
+    #[test]
+    fn module_files_are_distinguished_from_scripts() {
+        assert_eq!(classify("main.luau", false), AssetKind::LuaScript);
+        assert_eq!(classify("main.lua", false), AssetKind::LuaScript);
+        assert_eq!(classify("balance.module.luau", false), AssetKind::LuaModule);
+        assert_eq!(classify("Balance.Module.LUAU", false), AssetKind::LuaModule);
+        assert_eq!(classify("util.module.lua", false), AssetKind::LuaModule);
+        // A folder or non-luau file is unaffected.
+        assert_eq!(classify("scripts", true), AssetKind::Folder);
+        assert_eq!(classify("hero.png", false), AssetKind::Image);
     }
 }
