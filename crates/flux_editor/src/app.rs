@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
-use flux_core::{InstanceId, World, registry};
+use flux_core::{InstanceId, Value, World, registry};
 use flux_icons::{Icon, IconRole, Icons};
 use flux_runtime::{DataBackend, InputFrame, LogEntry, LogLevel, Session, SessionOptions};
 
@@ -43,6 +43,9 @@ pub struct UiState {
     pub viewport_rect: egui::Rect,
     pub explorer: crate::explorer::ExplorerState,
     pub open_script: Option<(String, Option<(usize, usize)>)>,
+    /// A Script/Module without a backing file whose source should be generated;
+    /// drained into a save-file dialog on the next frame.
+    pub create_source: Option<InstanceId>,
 }
 
 impl Default for UiState {
@@ -64,6 +67,7 @@ impl Default for UiState {
             viewport_rect: egui::Rect::NOTHING,
             explorer: crate::explorer::ExplorerState::default(),
             open_script: None,
+            create_source: None,
         }
     }
 }
@@ -402,6 +406,68 @@ impl EditorApp {
                 false
             }
         }
+    }
+
+    /// Generate a backing `.luau` file for a scriptable instance that has none.
+    /// Prompts for a save location (rooted at the project), writes a starter
+    /// file, points `SourcePath` at it (undoable), and opens it in the editor.
+    fn create_source_for(&mut self, id: InstanceId) {
+        if self.playing() {
+            self.ui.status = "Stop playtesting before creating scripts".to_string();
+            return;
+        }
+        let Some(root) = self.project_root() else {
+            self.ui.status = "Save the project before creating scripts".to_string();
+            return;
+        };
+        let is_module = match self.world.class_name(id) {
+            Some("Module") => true,
+            Some("Script") => false,
+            _ => return,
+        };
+        let name = self.world.name(id).unwrap_or("Script").to_string();
+
+        // Prefer the project's `scripts/` folder as the starting directory.
+        let scripts = root.join("scripts");
+        let start = if scripts.is_dir() { scripts } else { root.clone() };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Luau source", &["luau", "lua"])
+            .set_directory(&start)
+            .set_file_name(source_file_name(&name, is_module))
+            .save_file()
+        else {
+            return;
+        };
+
+        // Asset paths are stored relative to the project root, forward-slashed.
+        let Ok(relative) = path.strip_prefix(&root) else {
+            self.ui.status = "Source file must be inside the project folder".to_string();
+            return;
+        };
+        let rel = relative.to_string_lossy().replace('\\', "/");
+
+        // Seed a starter file, but never clobber an existing one — just link it.
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(&path, default_source(&name, is_module)) {
+                self.ui.status = format!("Create failed: {e}");
+                return;
+            }
+        }
+
+        let old = self
+            .world
+            .get_prop(id, "SourcePath")
+            .cloned()
+            .unwrap_or(Value::Asset(String::new()));
+        self.apply(
+            Command::set_prop(id, "SourcePath", old, Value::Asset(rel.clone())),
+            false,
+        );
+        self.editor.open(&rel, &root, None);
+        self.ui.status = format!("Created {rel}");
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -1003,6 +1069,34 @@ impl EditorApp {
     }
 }
 
+/// A safe default file name for a generated source file. `*.module.luau` is
+/// recognised as a Module, a plain `*.luau` as a Script (see `flux_render`).
+fn source_file_name(instance_name: &str, is_module: bool) -> String {
+    let stem: String = instance_name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    let stem = if stem.trim_matches(['_', '-']).is_empty() {
+        if is_module { "Module" } else { "Script" }.to_string()
+    } else {
+        stem
+    };
+    if is_module {
+        format!("{stem}.module.luau")
+    } else {
+        format!("{stem}.luau")
+    }
+}
+
+/// Starter content for a freshly generated source file.
+fn default_source(name: &str, is_module: bool) -> String {
+    if is_module {
+        format!("--!strict\n-- {name} module\n\nlocal module = {{}}\n\nreturn module\n")
+    } else {
+        format!("--!strict\n-- {name} script\n\nprint(\"{name} running\")\n")
+    }
+}
+
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if ctx.input(|i| i.viewport().close_requested()) && self.dirty && !self.allow_close {
@@ -1124,6 +1218,10 @@ impl eframe::App for EditorApp {
                 Some(root) => self.editor.open(&rel, &root, line),
                 None => self.ui.status = "Save the project before opening scripts".to_string(),
             }
+        }
+
+        if let Some(id) = self.ui.create_source.take() {
+            self.create_source_for(id);
         }
 
         self.confirm_modal(ctx);

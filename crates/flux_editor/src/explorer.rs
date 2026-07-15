@@ -277,11 +277,12 @@ fn interact(ui: &mut Ui, world: &World, state: &mut UiState, rows: &[Row]) {
         }
         if row.has_children {
             toggle(&mut state.explorer.collapsed, row.id);
-        } else if world.class_name(row.id) == Some("Script") {
-            if let Some(flux_core::Value::Asset(path)) = world.get_prop(row.id, "SourcePath") {
-                if !path.is_empty() {
-                    state.open_script = Some((path.clone(), None));
-                }
+        } else if is_scriptable(world, row.id) {
+            match world.get_prop(row.id, "SourcePath") {
+                // No backing file yet — offer to generate one.
+                Some(Value::Asset(p)) if p.is_empty() => state.create_source = Some(row.id),
+                Some(Value::Asset(p)) => state.open_script = Some((p.clone(), None)),
+                _ => {}
             }
         }
         state.explorer.press = None;
@@ -501,6 +502,14 @@ fn context_menu(ui: &mut Ui, world: &World, state: &mut UiState, id: InstanceId,
     if gui::is_gui_object(world, id) {
         gui_convert_menu(ui, world, state, id);
     }
+    // A script/module with no backing file can generate one and pick where to
+    // save it; an existing one is opened by double-click instead.
+    if needs_source(world, id) {
+        if ui.button("Create Source File…").clicked() {
+            state.create_source = Some(id);
+            ui.close();
+        }
+    }
     ui.separator();
     if ui.button("Rename").clicked() {
         state.rename = Some(RenameState {
@@ -582,6 +591,17 @@ fn drop_asset(state: &mut UiState, target: InstanceId, rel: &str) {
         merge: false,
     });
     state.selection = Some(target);
+}
+
+/// Classes whose source lives in an external `.luau` file (`SourcePath`).
+fn is_scriptable(world: &World, id: InstanceId) -> bool {
+    matches!(world.class_name(id), Some("Script") | Some("Module"))
+}
+
+/// A scriptable instance whose `SourcePath` is still empty.
+fn needs_source(world: &World, id: InstanceId) -> bool {
+    is_scriptable(world, id)
+        && matches!(world.get_prop(id, "SourcePath"), Some(Value::Asset(p)) if p.is_empty())
 }
 
 fn icon_for(world: &World, id: InstanceId, open: bool) -> Icon {
