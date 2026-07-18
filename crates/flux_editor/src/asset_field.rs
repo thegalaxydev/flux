@@ -50,8 +50,28 @@ pub fn asset_field(
     root: Option<&Path>,
 ) -> AssetFieldAction {
     let mut action = AssetFieldAction::None;
-    ui.horizontal(|ui| {
-        let box_w = (ui.available_width() - 46.0).max(60.0);
+    // Right-to-left: the buttons take their natural width first, then the drop
+    // box fills *exactly* the remaining width. Sizing the box to
+    // `available_width` minus a guess would let the row overflow the panel,
+    // which makes a resizable SidePanel grow leftward every frame.
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let has = !value.is_empty();
+        if ui
+            .add_enabled(has, egui::Button::new("✕").small())
+            .on_hover_text("Clear")
+            .clicked()
+        {
+            action = AssetFieldAction::Clear;
+        }
+        if ui
+            .add_enabled(has, egui::Button::new("↗").small())
+            .on_hover_text("Open asset")
+            .clicked()
+        {
+            action = AssetFieldAction::Open;
+        }
+
+        let box_w = ui.available_width().max(40.0);
         let (rect, resp) = ui.allocate_exact_size(vec2(box_w, 20.0), Sense::click());
 
         // Highlight the field while a drag hovers, green if it would be accepted.
@@ -117,22 +137,6 @@ pub fn asset_field(
             value.to_string()
         };
         resp.on_hover_text(hint);
-
-        let has = !value.is_empty();
-        if ui
-            .add_enabled(has, egui::Button::new("↗").small())
-            .on_hover_text("Open asset")
-            .clicked()
-        {
-            action = AssetFieldAction::Open;
-        }
-        if ui
-            .add_enabled(has, egui::Button::new("✕").small())
-            .on_hover_text("Clear")
-            .clicked()
-        {
-            action = AssetFieldAction::Clear;
-        }
     });
     action
 }
