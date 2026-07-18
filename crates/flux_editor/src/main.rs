@@ -2,6 +2,7 @@
 
 mod animation_editor;
 mod app;
+mod asset_field;
 mod assets_panel;
 mod command;
 mod explorer;
@@ -139,67 +140,149 @@ fn demo_world() -> World {
 
     let player = w.create("Sprite", ws).unwrap();
     w.set_name(player, "Player").unwrap();
-    w.set_prop(player, "Size", Value::Vec2(Vec2::new(48.0, 48.0))).unwrap();
-    w.set_prop(player, "Position", Value::Vec2(Vec2::new(0.0, -60.0))).unwrap();
-    w.set_prop(player, "Texture", Value::Asset("assets/sprites/hero.png".into())).unwrap();
+    w.set_prop(player, "Size", Value::Vec2(Vec2::new(48.0, 48.0)))
+        .unwrap();
+    w.set_prop(player, "Position", Value::Vec2(Vec2::new(0.0, -60.0)))
+        .unwrap();
+    w.set_prop(
+        player,
+        "Texture",
+        Value::Asset("assets/sprites/hero.png".into()),
+    )
+    .unwrap();
     w.set_prop(player, "ZIndex", Value::Number(1.0)).unwrap();
 
     let movement = w.create("Script", player).unwrap();
     w.set_name(movement, "Movement").unwrap();
-    w.set_prop(movement, "SourcePath", Value::Asset("scripts/movement.luau".into())).unwrap();
+    w.set_prop(
+        movement,
+        "SourcePath",
+        Value::Asset("scripts/movement.luau".into()),
+    )
+    .unwrap();
 
     let env = w.create("Folder", ws).unwrap();
     w.set_name(env, "Environment").unwrap();
 
     let ground = w.create("Sprite", env).unwrap();
     w.set_name(ground, "Ground").unwrap();
-    w.set_prop(ground, "Size", Value::Vec2(Vec2::new(720.0, 48.0))).unwrap();
-    w.set_prop(ground, "Position", Value::Vec2(Vec2::new(0.0, 120.0))).unwrap();
-    w.set_prop(ground, "Texture", Value::Asset("assets/sprites/ground.png".into())).unwrap();
+    w.set_prop(ground, "Size", Value::Vec2(Vec2::new(720.0, 48.0)))
+        .unwrap();
+    w.set_prop(ground, "Position", Value::Vec2(Vec2::new(0.0, 120.0)))
+        .unwrap();
+    w.set_prop(
+        ground,
+        "Texture",
+        Value::Asset("assets/sprites/ground.png".into()),
+    )
+    .unwrap();
 
     let crate1 = w.create("Sprite", env).unwrap();
     w.set_name(crate1, "Crate").unwrap();
-    w.set_prop(crate1, "Size", Value::Vec2(Vec2::new(56.0, 56.0))).unwrap();
-    w.set_prop(crate1, "Position", Value::Vec2(Vec2::new(150.0, 68.0))).unwrap();
-    w.set_prop(crate1, "Texture", Value::Asset("assets/sprites/crate.png".into())).unwrap();
+    w.set_prop(crate1, "Size", Value::Vec2(Vec2::new(56.0, 56.0)))
+        .unwrap();
+    w.set_prop(crate1, "Position", Value::Vec2(Vec2::new(150.0, 68.0)))
+        .unwrap();
+    w.set_prop(
+        crate1,
+        "Texture",
+        Value::Asset("assets/sprites/crate.png".into()),
+    )
+    .unwrap();
 
     let crate2 = w.create("Sprite", env).unwrap();
     w.set_name(crate2, "Crate").unwrap();
-    w.set_prop(crate2, "Size", Value::Vec2(Vec2::new(56.0, 56.0))).unwrap();
-    w.set_prop(crate2, "Position", Value::Vec2(Vec2::new(210.0, 68.0))).unwrap();
-    w.set_prop(crate2, "Texture", Value::Asset("assets/sprites/crate.png".into())).unwrap();
+    w.set_prop(crate2, "Size", Value::Vec2(Vec2::new(56.0, 56.0)))
+        .unwrap();
+    w.set_prop(crate2, "Position", Value::Vec2(Vec2::new(210.0, 68.0)))
+        .unwrap();
+    w.set_prop(
+        crate2,
+        "Texture",
+        Value::Asset("assets/sprites/crate.png".into()),
+    )
+    .unwrap();
 
     let template = w.create("Sprite", storage).unwrap();
     w.set_name(template, "BulletTemplate").unwrap();
-    w.set_prop(template, "Size", Value::Vec2(Vec2::new(12.0, 4.0))).unwrap();
+    w.set_prop(template, "Size", Value::Vec2(Vec2::new(12.0, 4.0)))
+        .unwrap();
 
     let gui = w.gui().unwrap();
     let hud = w.create("Frame", gui).unwrap();
     w.set_name(hud, "HUD").unwrap();
-    w.set_prop(hud, "Position", Value::UDim2(UDim2::from_offset(12.0, 12.0))).unwrap();
-    w.set_prop(hud, "Size", Value::UDim2(UDim2::from_offset(240.0, 72.0))).unwrap();
-    w.set_prop(hud, "BackgroundColor", Value::Color(Color::new(0.07, 0.08, 0.11, 0.85))).unwrap();
+    w.set_prop(
+        hud,
+        "Position",
+        Value::UDim2(UDim2::from_offset(12.0, 12.0)),
+    )
+    .unwrap();
+    w.set_prop(hud, "Size", Value::UDim2(UDim2::from_offset(240.0, 72.0)))
+        .unwrap();
+    w.set_prop(
+        hud,
+        "BackgroundColor",
+        Value::Color(Color::new(0.07, 0.08, 0.11, 0.85)),
+    )
+    .unwrap();
 
     let title = w.create("Label", gui).unwrap();
     w.set_name(title, "Title").unwrap();
-    w.set_prop(title, "Position", Value::UDim2(UDim2::from_offset(24.0, 20.0))).unwrap();
-    w.set_prop(title, "Size", Value::UDim2(UDim2::from_offset(216.0, 20.0))).unwrap();
-    w.set_prop(title, "Text", Value::String("Flux — click the button".into())).unwrap();
+    w.set_prop(
+        title,
+        "Position",
+        Value::UDim2(UDim2::from_offset(24.0, 20.0)),
+    )
+    .unwrap();
+    w.set_prop(title, "Size", Value::UDim2(UDim2::from_offset(216.0, 20.0)))
+        .unwrap();
+    w.set_prop(
+        title,
+        "Text",
+        Value::String("Flux — click the button".into()),
+    )
+    .unwrap();
     w.set_prop(title, "TextSize", Value::Number(15.0)).unwrap();
-    w.set_prop(title, "BackgroundColor", Value::Color(Color::new(0.0, 0.0, 0.0, 0.0))).unwrap();
+    w.set_prop(
+        title,
+        "BackgroundColor",
+        Value::Color(Color::new(0.0, 0.0, 0.0, 0.0)),
+    )
+    .unwrap();
     w.set_prop(title, "ZIndex", Value::Number(1.0)).unwrap();
 
     let button = w.create("Button", gui).unwrap();
     w.set_name(button, "Btn").unwrap();
-    w.set_prop(button, "Position", Value::UDim2(UDim2::from_offset(24.0, 46.0))).unwrap();
-    w.set_prop(button, "Size", Value::UDim2(UDim2::from_offset(150.0, 26.0))).unwrap();
-    w.set_prop(button, "Text", Value::String("Click me".into())).unwrap();
-    w.set_prop(button, "BackgroundColor", Value::Color(Color::new(0.20, 0.45, 0.80, 1.0))).unwrap();
+    w.set_prop(
+        button,
+        "Position",
+        Value::UDim2(UDim2::from_offset(24.0, 46.0)),
+    )
+    .unwrap();
+    w.set_prop(
+        button,
+        "Size",
+        Value::UDim2(UDim2::from_offset(150.0, 26.0)),
+    )
+    .unwrap();
+    w.set_prop(button, "Text", Value::String("Click me".into()))
+        .unwrap();
+    w.set_prop(
+        button,
+        "BackgroundColor",
+        Value::Color(Color::new(0.20, 0.45, 0.80, 1.0)),
+    )
+    .unwrap();
     w.set_prop(button, "ZIndex", Value::Number(1.0)).unwrap();
 
     let ui_script = w.create("Script", button).unwrap();
     w.set_name(ui_script, "UI").unwrap();
-    w.set_prop(ui_script, "SourcePath", Value::Asset("scripts/ui.luau".into())).unwrap();
+    w.set_prop(
+        ui_script,
+        "SourcePath",
+        Value::Asset("scripts/ui.luau".into()),
+    )
+    .unwrap();
 
     w
 }

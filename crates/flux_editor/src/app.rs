@@ -1177,7 +1177,7 @@ impl eframe::App for EditorApp {
                     });
                     panel.separator();
                     egui::ScrollArea::vertical().show(panel, |panel| {
-                        crate::properties::show(panel, active, ui);
+                        crate::properties::show(panel, active, ui, root.as_deref(), anim_cache);
                     });
                 });
             egui::CentralPanel::default().show(ctx, |panel| {

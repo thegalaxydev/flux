@@ -8,6 +8,20 @@ use crate::value::{Color, Rect, UDim2, Value, ValueType};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ClassId(usize);
 
+/// The kind of asset an `Asset`-typed property points at, so the editor can
+/// present a typed drag-and-drop object field and validate drops by asset type
+/// rather than raw file extension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssetType {
+    Texture,
+    SpriteFrames,
+    Script,
+    Audio,
+    Material,
+    Scene,
+    Any,
+}
+
 #[derive(Clone, Debug)]
 pub struct PropDef {
     pub name: &'static str,
@@ -16,6 +30,8 @@ pub struct PropDef {
     /// Transient runtime state (e.g. playback position): held on the instance so
     /// scripts and the inspector can read it, but never written to scene files.
     pub transient: bool,
+    /// For `Asset` properties, the kind of asset expected (drives typed fields).
+    pub asset: Option<AssetType>,
 }
 
 fn prop(name: &'static str, default: Value) -> PropDef {
@@ -24,6 +40,7 @@ fn prop(name: &'static str, default: Value) -> PropDef {
         ty: default.ty(),
         default,
         transient: false,
+        asset: None,
     }
 }
 
@@ -32,6 +49,14 @@ fn prop_t(name: &'static str, default: Value) -> PropDef {
     PropDef {
         transient: true,
         ..prop(name, default)
+    }
+}
+
+/// A typed asset-reference property (empty by default).
+fn asset_prop(name: &'static str, kind: AssetType) -> PropDef {
+    PropDef {
+        asset: Some(kind),
+        ..prop(name, Value::Asset(String::new()))
     }
 }
 
@@ -138,7 +163,7 @@ impl ClassRegistry {
             true,
             false,
             vec![
-                prop("Texture", Value::Asset(String::new())),
+                asset_prop("Texture", AssetType::Texture),
                 prop("Size", Value::Vec2(Vec2::new(100.0, 100.0))),
                 prop("Pivot", Value::Vec2(Vec2::new(0.5, 0.5))),
                 // Sub-region of the texture, in pixels. Zero size = whole image.
@@ -147,7 +172,7 @@ impl ClassRegistry {
                 prop("FlipX", Value::Bool(false)),
                 prop("FlipY", Value::Bool(false)),
                 // Reserved for a future shader/material system.
-                prop("Material", Value::Asset(String::new())),
+                asset_prop("Material", AssetType::Material),
             ],
         );
         // Self-contained sprite-frame animation node. It owns playback AND
@@ -162,7 +187,7 @@ impl ClassRegistry {
             true,
             false,
             vec![
-                prop("Frames", Value::Asset(String::new())),
+                asset_prop("Frames", AssetType::SpriteFrames),
                 prop("Animation", Value::String(String::new())),
                 prop("AutoPlay", Value::Bool(false)),
                 prop("SpeedScale", Value::Number(1.0)),
@@ -171,7 +196,7 @@ impl ClassRegistry {
                 prop("Tint", Value::Color(Color::WHITE)),
                 prop("FlipX", Value::Bool(false)),
                 prop("FlipY", Value::Bool(false)),
-                prop("Material", Value::Asset(String::new())),
+                asset_prop("Material", AssetType::Material),
                 // Transient runtime state — never serialized.
                 prop_t("Playing", Value::Bool(false)),
                 prop_t("CurrentFrame", Value::Number(0.0)),
@@ -212,7 +237,7 @@ impl ClassRegistry {
             true,
             false,
             vec![
-                prop("SourcePath", Value::Asset(String::new())),
+                asset_prop("SourcePath", AssetType::Script),
                 prop("Enabled", Value::Bool(true)),
             ],
         );
@@ -222,7 +247,7 @@ impl ClassRegistry {
             Some("Instance"),
             true,
             false,
-            vec![prop("SourcePath", Value::Asset(String::new()))],
+            vec![asset_prop("SourcePath", AssetType::Script)],
         );
         reg.add("Gui", Some("Instance"), false, true, vec![]);
         reg.add(
@@ -255,7 +280,7 @@ impl ClassRegistry {
             true,
             false,
             vec![
-                prop("Image", Value::Asset(String::new())),
+                asset_prop("Image", AssetType::Texture),
                 prop("ImageColor", Value::Color(Color::WHITE)),
                 prop("SliceMargins", Value::Rect(Rect::default())),
             ],

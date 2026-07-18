@@ -1,14 +1,25 @@
+use std::path::Path;
+
 use eframe::egui::{self, Ui};
-use flux_core::{Color, InstanceId, Rect, UDim2, Value, World};
+use flux_core::animation::AnimationCache;
+use flux_core::{AssetType, Color, InstanceId, Rect, UDim2, Value, World, registry};
 
 use crate::app::{Pending, UiState};
+use crate::asset_field::{AssetFieldAction, asset_field};
 use crate::command::Command;
 
-pub fn show(ui: &mut Ui, world: &World, state: &mut UiState) {
+pub fn show(
+    ui: &mut Ui,
+    world: &World,
+    state: &mut UiState,
+    root: Option<&Path>,
+    anim_cache: &mut AnimationCache,
+) {
     let Some(id) = state.selection.filter(|&id| world.contains(id)) else {
         ui.weak("Nothing selected");
         return;
     };
+    let class = world.class_name(id);
     ui.push_id(id, |ui| {
         egui::Grid::new("props")
             .num_columns(2)
@@ -17,11 +28,15 @@ pub fn show(ui: &mut Ui, world: &World, state: &mut UiState) {
             .show(ui, |ui| {
                 name_row(ui, world, id, state);
                 ui.label("ClassName");
-                ui.label(world.class_name(id).unwrap_or_default());
+                ui.label(class.unwrap_or_default());
                 ui.end_row();
                 for (prop, value) in world.props(id) {
                     ui.label(prop);
-                    if let Some((new, merge)) = value_widget(ui, world, prop, value) {
+                    if prop == "Animation" && class == Some("AnimatedSprite") {
+                        animation_row(ui, world, id, value, root, anim_cache, state);
+                    } else if let Value::Asset(cur) = value {
+                        asset_row(ui, world, id, prop, cur, root, state);
+                    } else if let Some((new, merge)) = value_widget(ui, world, prop, value) {
                         state.queue.push(Pending {
                             cmd: Command::set_prop(id, prop, value.clone(), new),
                             merge,
@@ -30,24 +45,111 @@ pub fn show(ui: &mut Ui, world: &World, state: &mut UiState) {
                     ui.end_row();
                 }
             });
+    });
+}
 
-        // AnimatedSprite: a shortcut into the animation editor for its library.
-        if world.class_name(id) == Some("AnimatedSprite") {
-            if let Some(Value::Asset(frames)) = world.get_prop(id, "Frames") {
-                let frames = frames.clone();
-                ui.separator();
-                if ui
-                    .add_enabled(
-                        !frames.is_empty(),
-                        egui::Button::new("Edit Animation Library…"),
-                    )
-                    .clicked()
-                {
-                    state.open_animation = Some(frames);
+/// The declared asset kind of `prop` on `id`'s class (defaults to `Any`).
+fn asset_type_of(world: &World, id: InstanceId, prop: &str) -> AssetType {
+    world
+        .class_of(id)
+        .map(|c| registry().info(c))
+        .and_then(|info| info.props.iter().find(|p| p.name == prop))
+        .and_then(|pd| pd.asset)
+        .unwrap_or(AssetType::Any)
+}
+
+/// A typed asset-reference field: drag-and-drop, clear, and open-in-editor.
+fn asset_row(
+    ui: &mut Ui,
+    world: &World,
+    id: InstanceId,
+    prop: &'static str,
+    cur: &str,
+    root: Option<&Path>,
+    state: &mut UiState,
+) {
+    let expected = asset_type_of(world, id, prop);
+    let set = |state: &mut UiState, new: String| {
+        state.queue.push(Pending {
+            cmd: Command::set_prop(id, prop, Value::Asset(cur.to_string()), Value::Asset(new)),
+            merge: false,
+        });
+    };
+    match asset_field(ui, cur, expected, root) {
+        AssetFieldAction::Assign(path) => set(state, path),
+        AssetFieldAction::Clear => set(state, String::new()),
+        AssetFieldAction::Open => match expected {
+            AssetType::Script => state.open_script = Some((cur.to_string(), None)),
+            AssetType::SpriteFrames => state.open_animation = Some(cur.to_string()),
+            _ => {}
+        },
+        AssetFieldAction::None => {}
+    }
+}
+
+/// `Animation` on an AnimatedSprite: a dropdown validated against the assigned
+/// `Frames` library. A still-selected animation that no longer exists is shown
+/// as missing rather than silently cleared.
+fn animation_row(
+    ui: &mut Ui,
+    world: &World,
+    id: InstanceId,
+    value: &Value,
+    root: Option<&Path>,
+    anim_cache: &mut AnimationCache,
+    state: &mut UiState,
+) {
+    let cur = match value {
+        Value::String(s) => s.clone(),
+        _ => String::new(),
+    };
+    let frames = match world.get_prop(id, "Frames") {
+        Some(Value::Asset(p)) => p.clone(),
+        _ => String::new(),
+    };
+    let names = root
+        .filter(|_| !frames.is_empty())
+        .and_then(|r| anim_cache.get(&frames, r))
+        .map(|f| f.clip_names())
+        .unwrap_or_default();
+
+    // No library assigned/loaded yet — fall back to a plain text field.
+    if names.is_empty() {
+        let mut v = cur.clone();
+        let resp = ui.text_edit_singleline(&mut v);
+        if resp.changed() {
+            state.queue.push(Pending {
+                cmd: Command::set_prop(id, "Animation", value.clone(), Value::String(v)),
+                merge: resp.has_focus(),
+            });
+        }
+        return;
+    }
+
+    let missing = !cur.is_empty() && !names.contains(&cur);
+    let selected = if cur.is_empty() {
+        "(none)".to_string()
+    } else if missing {
+        format!("⚠ {cur}")
+    } else {
+        cur.clone()
+    };
+    let mut chosen: Option<String> = None;
+    egui::ComboBox::from_id_salt((id, "Animation"))
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for n in &names {
+                if ui.selectable_label(&cur == n, n).clicked() {
+                    chosen = Some(n.clone());
                 }
             }
-        }
-    });
+        });
+    if let Some(n) = chosen {
+        state.queue.push(Pending {
+            cmd: Command::set_prop(id, "Animation", value.clone(), Value::String(n)),
+            merge: false,
+        });
+    }
 }
 
 fn name_row(ui: &mut Ui, world: &World, id: InstanceId, state: &mut UiState) {
