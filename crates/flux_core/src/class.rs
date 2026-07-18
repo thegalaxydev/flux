@@ -204,6 +204,21 @@ impl ClassRegistry {
             ],
         );
         reg.add("Frame", Some("GuiObject"), true, false, vec![]);
+        // An image panel with optional 9-slice. `SliceMargins` reuses Rect as
+        // four source-pixel border insets `(left, top, right, bottom)`: zero
+        // means the image is simply stretched to fill; non-zero keeps the
+        // corners crisp while the edges/centre stretch.
+        reg.add(
+            "ImageFrame",
+            Some("GuiObject"),
+            true,
+            false,
+            vec![
+                prop("Image", Value::Asset(String::new())),
+                prop("ImageColor", Value::Color(Color::WHITE)),
+                prop("SliceMargins", Value::Rect(Rect::default())),
+            ],
+        );
         reg.add(
             "Label",
             Some("GuiObject"),

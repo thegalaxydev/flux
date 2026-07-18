@@ -111,20 +111,27 @@ fn value_widget(ui: &mut Ui, world: &World, prop: &str, value: &Value) -> Option
             })
         }
         Value::Rect(r) => {
+            // SliceMargins is authored as border insets (left/top/right/bottom);
+            // every other Rect is a texture region (x/y/w/h).
+            let (la, lb, lc, ld) = if prop == "SliceMargins" {
+                ("L ", "T ", "R ", "B ")
+            } else {
+                ("x ", "y ", "w ", "h ")
+            };
             let (mut x, mut y, mut w, mut h) = (r.x, r.y, r.w, r.h);
             let rs = ui
                 .vertical(|ui| {
                     let top = ui
                         .horizontal(|ui| {
-                            let a = ui.add(egui::DragValue::new(&mut x).speed(1.0).prefix("x "));
-                            let b = ui.add(egui::DragValue::new(&mut y).speed(1.0).prefix("y "));
+                            let a = ui.add(egui::DragValue::new(&mut x).speed(1.0).prefix(la));
+                            let b = ui.add(egui::DragValue::new(&mut y).speed(1.0).prefix(lb));
                             (a, b)
                         })
                         .inner;
                     let bot = ui
                         .horizontal(|ui| {
-                            let a = ui.add(egui::DragValue::new(&mut w).speed(1.0).prefix("w "));
-                            let b = ui.add(egui::DragValue::new(&mut h).speed(1.0).prefix("h "));
+                            let a = ui.add(egui::DragValue::new(&mut w).speed(1.0).prefix(lc));
+                            let b = ui.add(egui::DragValue::new(&mut h).speed(1.0).prefix(ld));
                             (a, b)
                         })
                         .inner;

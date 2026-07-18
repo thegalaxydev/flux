@@ -173,15 +173,19 @@ pub fn draw_scene(
         }
     }
 
-    let gui_rects = draw_gui(painter, world, rect, playing, pointer, selection);
+    let gui_rects = draw_gui(painter, ctx, textures, root, world, rect, playing, pointer, selection);
     drawn.extend(gui_rects);
     drawn
 }
 
 /// Draws the GUI layer and returns the absolute rect of each visible GuiObject in
 /// ascending render order (so the last entry that contains a point is topmost).
+#[allow(clippy::too_many_arguments)]
 fn draw_gui(
     painter: &Painter,
+    ctx: &egui::Context,
+    textures: &mut TextureCache,
+    root: Option<&Path>,
     world: &World,
     rect: Rect,
     playing: bool,
@@ -220,7 +224,7 @@ fn draw_gui(
         hit.push((id, r));
 
         let clipped = painter.with_clip_rect(to_egui_rect(clip));
-        draw_gui_object(&clipped, world, id, r, is_a(id, button), playing, pointer);
+        draw_gui_object(&clipped, ctx, textures, root, world, id, r, is_a(id, button), playing, pointer);
 
         if !playing && selection == Some(id) {
             painter.rect_stroke(r.expand(1.0), 3.0, Stroke::new(1.5, SELECT), StrokeKind::Outside);
@@ -229,8 +233,12 @@ fn draw_gui(
     hit
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_gui_object(
     painter: &Painter,
+    ctx: &egui::Context,
+    textures: &mut TextureCache,
+    root: Option<&Path>,
     world: &World,
     id: InstanceId,
     r: Rect,
@@ -246,6 +254,27 @@ fn draw_gui_object(
         let alpha = bg.a * (1.0 - transparency);
         if alpha > 0.0 {
             painter.rect_filled(r, 3.0, to_color(&Color { a: alpha, ..*bg }));
+        }
+    }
+    // ImageFrame: draw its image, 9-sliced when SliceMargins are set.
+    if let (Some(root), Some(Value::Asset(path))) = (root, world.get_prop(id, "Image")) {
+        if !path.is_empty() {
+            if let Some(handle) = textures.get(ctx, root, path) {
+                let sz = handle.size();
+                let m = match world.get_prop(id, "SliceMargins") {
+                    Some(Value::Rect(m)) => (m.x, m.y, m.w, m.h),
+                    _ => (0.0, 0.0, 0.0, 0.0),
+                };
+                let tint = match world.get_prop(id, "ImageColor") {
+                    Some(Value::Color(c)) => to_color(c),
+                    _ => Color32::WHITE,
+                };
+                let mut mesh = Mesh::with_texture(handle.id());
+                for (dest, uv) in nine_slice_quads(r, sz[0] as f32, sz[1] as f32, m) {
+                    mesh.add_rect_with_uv(dest, uv, tint);
+                }
+                painter.add(Shape::mesh(mesh));
+            }
         }
     }
     if is_button && playing && pointer.is_some_and(|p| r.contains(p)) {
@@ -264,9 +293,113 @@ fn draw_gui_object(
     }
 }
 
+/// Up to 9 `(dest, uv)` quads for a 9-slice of a `tw x th` texture into `dest`,
+/// with border insets `(left, top, right, bottom)` in source pixels. Zero-area
+/// quads are omitted, so all-zero margins collapse to a single stretched quad.
+/// Opposite borders are scaled down if they would overlap within `dest`.
+fn nine_slice_quads(dest: Rect, tw: f32, th: f32, m: (f32, f32, f32, f32)) -> Vec<(Rect, Rect)> {
+    if tw <= 0.0 || th <= 0.0 {
+        let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
+        return vec![(dest, uv)];
+    }
+    // Borders are (left, top, right, bottom); none can exceed the image.
+    let l = m.0.clamp(0.0, tw);
+    let t = m.1.clamp(0.0, th);
+    let r = m.2.clamp(0.0, tw);
+    let b = m.3.clamp(0.0, th);
+    let (dl, dr) = fit_pair(l, r, dest.width());
+    let (dt, db) = fit_pair(t, b, dest.height());
+    let sx = [0.0, l, (tw - r).max(l), tw];
+    let sy = [0.0, t, (th - b).max(t), th];
+    let dx = [dest.left(), dest.left() + dl, dest.right() - dr, dest.right()];
+    let dy = [dest.top(), dest.top() + dt, dest.bottom() - db, dest.bottom()];
+    let mut out = Vec::new();
+    for row in 0..3 {
+        for col in 0..3 {
+            let d = Rect::from_min_max(
+                Pos2::new(dx[col], dy[row]),
+                Pos2::new(dx[col + 1], dy[row + 1]),
+            );
+            if d.width() <= 0.01 || d.height() <= 0.01 {
+                continue;
+            }
+            let uv = Rect::from_min_max(
+                Pos2::new(sx[col] / tw, sy[row] / th),
+                Pos2::new(sx[col + 1] / tw, sy[row + 1] / th),
+            );
+            out.push((d, uv));
+        }
+    }
+    out
+}
+
+/// Clamp a pair of opposite borders so their sum doesn't exceed `avail`.
+fn fit_pair(a: f32, b: f32, avail: f32) -> (f32, f32) {
+    let (a, b) = (a.max(0.0), b.max(0.0));
+    if a + b > avail && a + b > 0.0 {
+        let s = avail / (a + b);
+        (a * s, b * s)
+    } else {
+        (a, b)
+    }
+}
+
 fn zindex(world: &World, id: InstanceId) -> f64 {
     match world.get_prop(id, "ZIndex") {
         Some(Value::Number(z)) => *z,
         _ => 0.0,
+    }
+}
+
+#[cfg(test)]
+mod nine_slice_tests {
+    use super::nine_slice_quads;
+    use egui::{Pos2, Rect, vec2};
+
+    fn dest(w: f32, h: f32) -> Rect {
+        Rect::from_min_size(Pos2::new(0.0, 0.0), vec2(w, h))
+    }
+
+    #[test]
+    fn margins_produce_nine_quads_with_fixed_corners() {
+        let quads = nine_slice_quads(dest(100.0, 100.0), 32.0, 32.0, (8.0, 8.0, 8.0, 8.0));
+        assert_eq!(quads.len(), 9);
+        // First quad is the top-left corner: 8x8 in dest, uv 0..0.25.
+        let (d, uv) = quads[0];
+        assert!((d.width() - 8.0).abs() < 1e-3 && (d.height() - 8.0).abs() < 1e-3);
+        assert!((uv.min.x - 0.0).abs() < 1e-3 && (uv.max.x - 0.25).abs() < 1e-3);
+        // Corners keep source size while the panel is much larger, so the
+        // centre stretches: exactly one dest quad is 84x84 (100 - 8 - 8).
+        let center = quads
+            .iter()
+            .find(|(d, _)| (d.width() - 84.0).abs() < 1e-3 && (d.height() - 84.0).abs() < 1e-3);
+        assert!(center.is_some(), "missing stretched centre quad");
+    }
+
+    #[test]
+    fn zero_margins_collapse_to_a_single_stretched_quad() {
+        let quads = nine_slice_quads(dest(50.0, 40.0), 16.0, 16.0, (0.0, 0.0, 0.0, 0.0));
+        assert_eq!(quads.len(), 1);
+        let (d, uv) = quads[0];
+        assert_eq!(d, dest(50.0, 40.0));
+        assert!((uv.max.x - 1.0).abs() < 1e-3 && (uv.max.y - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn oversized_borders_scale_down_to_fit_dest() {
+        // Borders of 40+40 can't fit a 50px-wide panel; they scale to 25+25.
+        let quads = nine_slice_quads(dest(50.0, 200.0), 64.0, 64.0, (40.0, 10.0, 40.0, 10.0));
+        let left_col_max = quads
+            .iter()
+            .map(|(d, _)| d.min.x + (d.width().min(25.01)))
+            .fold(0.0_f32, f32::max);
+        // No dest quad should extend a left border past the midpoint (25).
+        let widest_left = quads
+            .iter()
+            .filter(|(d, _)| d.min.x < 1.0)
+            .map(|(d, _)| d.width())
+            .fold(0.0_f32, f32::max);
+        assert!(widest_left <= 25.0 + 1e-3, "left border not clamped: {widest_left}");
+        let _ = left_col_max;
     }
 }
