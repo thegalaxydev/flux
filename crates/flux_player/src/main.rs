@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use flux_runtime::{DataBackend, InputFrame, Session, SessionOptions};
-use flux_view::{TextureCache, draw_scene, game_camera};
+use flux_view::{AnimationCache, TextureCache, draw_scene, game_camera};
 
 struct Player {
     session: Session,
     textures: TextureCache,
+    anim: AnimationCache,
     root: PathBuf,
 }
 
@@ -31,6 +32,7 @@ impl eframe::App for Player {
                     ctx,
                     &w,
                     &mut self.textures,
+                    &mut self.anim,
                     rect,
                     camera,
                     Some(&self.root),
@@ -115,6 +117,7 @@ fn main() -> eframe::Result {
             Ok(Box::new(Player {
                 session,
                 textures: TextureCache::default(),
+                anim: Default::default(),
                 root,
             }))
         }),

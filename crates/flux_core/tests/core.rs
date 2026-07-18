@@ -1,4 +1,4 @@
-use flux_core::{CoreError, UDim2, Value, World};
+use flux_core::{Color, CoreError, UDim2, Value, World};
 use glam::Vec2;
 
 #[test]
@@ -19,7 +19,10 @@ fn create_applies_defaults_and_set_prop_type_checks() {
     let ws = w.workspace();
     let sprite = w.create("Sprite", ws).unwrap();
     assert_eq!(w.name(sprite), Some("Sprite"));
-    assert_eq!(w.get_prop(sprite, "Position"), Some(&Value::Vec2(Vec2::ZERO)));
+    assert_eq!(
+        w.get_prop(sprite, "Position"),
+        Some(&Value::Vec2(Vec2::ZERO))
+    );
     assert_eq!(w.get_prop(sprite, "Visible"), Some(&Value::Bool(true)));
 
     w.set_prop(sprite, "Position", Value::Vec2(Vec2::new(10.0, 20.0)))
@@ -43,7 +46,10 @@ fn create_applies_defaults_and_set_prop_type_checks() {
 fn services_cannot_be_created_destroyed_or_renamed() {
     let mut w = World::new();
     let ws = w.workspace();
-    assert!(matches!(w.create("Game", ws), Err(CoreError::NotCreatable(_))));
+    assert!(matches!(
+        w.create("Game", ws),
+        Err(CoreError::NotCreatable(_))
+    ));
     assert!(matches!(
         w.create("Instance", ws),
         Err(CoreError::NotCreatable(_))
@@ -72,7 +78,10 @@ fn destroy_removes_subtree() {
     assert!(!w.contains(sprite));
     assert!(!w.contains(script));
     assert!(w.find_first_child(ws, "Folder").is_none());
-    assert!(matches!(w.destroy(folder), Err(CoreError::InstanceNotFound)));
+    assert!(matches!(
+        w.destroy(folder),
+        Err(CoreError::InstanceNotFound)
+    ));
 }
 
 #[test]
@@ -121,7 +130,8 @@ fn snapshot_restore_preserves_structure_and_remaps_refs() {
     w.set_name(folder, "Enemies").unwrap();
     let s1 = w.create("Sprite", folder).unwrap();
     w.set_name(s1, "Grunt").unwrap();
-    w.set_prop(s1, "Position", Value::Vec2(Vec2::new(5.0, 6.0))).unwrap();
+    w.set_prop(s1, "Position", Value::Vec2(Vec2::new(5.0, 6.0)))
+        .unwrap();
     let s2 = w.create("Sprite", folder).unwrap();
     w.set_name(s2, "Boss").unwrap();
 
@@ -164,13 +174,21 @@ fn json_roundtrip_is_stable() {
     w.set_name(player, "Player").unwrap();
     w.set_prop(player, "Position", Value::Vec2(Vec2::new(-40.0, 12.5)))
         .unwrap();
-    w.set_prop(player, "Tint", Value::Color(flux_core::Color::new(0.2, 0.5, 1.0, 1.0)))
-        .unwrap();
+    w.set_prop(
+        player,
+        "Tint",
+        Value::Color(flux_core::Color::new(0.2, 0.5, 1.0, 1.0)),
+    )
+    .unwrap();
 
     let script = w.create("Script", player).unwrap();
     w.set_name(script, "Movement").unwrap();
-    w.set_prop(script, "SourcePath", Value::Asset("scripts/movement.luau".into()))
-        .unwrap();
+    w.set_prop(
+        script,
+        "SourcePath",
+        Value::Asset("scripts/movement.luau".into()),
+    )
+    .unwrap();
 
     let env = w.create("Folder", ws).unwrap();
     w.set_name(env, "Environment").unwrap();
@@ -207,10 +225,18 @@ fn gui_properties_roundtrip() {
     let gui = w.gui().unwrap();
     let frame = w.create("Frame", gui).unwrap();
     w.set_name(frame, "Panel").unwrap();
-    w.set_prop(frame, "Position", Value::UDim2(UDim2::new(0.5, -20.0, 0.25, 8.0)))
-        .unwrap();
-    w.set_prop(frame, "Size", Value::UDim2(UDim2::new(0.0, 300.0, 1.0, -40.0)))
-        .unwrap();
+    w.set_prop(
+        frame,
+        "Position",
+        Value::UDim2(UDim2::new(0.5, -20.0, 0.25, 8.0)),
+    )
+    .unwrap();
+    w.set_prop(
+        frame,
+        "Size",
+        Value::UDim2(UDim2::new(0.0, 300.0, 1.0, -40.0)),
+    )
+    .unwrap();
     w.set_prop(frame, "AnchorPoint", Value::Vec2(Vec2::new(0.5, 0.5)))
         .unwrap();
     w.set_prop(frame, "BackgroundTransparency", Value::Number(0.25))
@@ -243,7 +269,10 @@ fn gui_properties_roundtrip() {
         w2.get_prop(panel, "BackgroundTransparency"),
         Some(&Value::Number(0.25))
     );
-    assert_eq!(w2.get_prop(panel, "ClipsDescendants"), Some(&Value::Bool(true)));
+    assert_eq!(
+        w2.get_prop(panel, "ClipsDescendants"),
+        Some(&Value::Bool(true))
+    );
     assert_eq!(w2.get_prop(panel, "Visible"), Some(&Value::Bool(false)));
 }
 
@@ -253,11 +282,15 @@ fn sprite_transform_props_roundtrip() {
     let ws = w.workspace();
     let sprite = w.create("Sprite", ws).unwrap();
     w.set_name(sprite, "Hero").unwrap();
-    w.set_prop(sprite, "Position", Value::Vec2(Vec2::new(12.0, -34.0))).unwrap();
-    w.set_prop(sprite, "Size", Value::Vec2(Vec2::new(80.0, 40.0))).unwrap();
-    w.set_prop(sprite, "Scale", Value::Vec2(Vec2::new(1.5, 2.0))).unwrap();
+    w.set_prop(sprite, "Position", Value::Vec2(Vec2::new(12.0, -34.0)))
+        .unwrap();
+    w.set_prop(sprite, "Size", Value::Vec2(Vec2::new(80.0, 40.0)))
+        .unwrap();
+    w.set_prop(sprite, "Scale", Value::Vec2(Vec2::new(1.5, 2.0)))
+        .unwrap();
     w.set_prop(sprite, "Rotation", Value::Number(37.5)).unwrap();
-    w.set_prop(sprite, "Pivot", Value::Vec2(Vec2::new(0.0, 1.0))).unwrap();
+    w.set_prop(sprite, "Pivot", Value::Vec2(Vec2::new(0.0, 1.0)))
+        .unwrap();
     w.set_prop(sprite, "ZIndex", Value::Number(4.0)).unwrap();
     w.set_prop(sprite, "Locked", Value::Bool(true)).unwrap();
     w.set_prop(sprite, "Visible", Value::Bool(false)).unwrap();
@@ -269,8 +302,14 @@ fn sprite_transform_props_roundtrip() {
     let ws2 = w2.workspace();
     let h = w2.find_first_child(ws2, "Hero").unwrap();
     assert_eq!(w2.get_prop(h, "Rotation"), Some(&Value::Number(37.5)));
-    assert_eq!(w2.get_prop(h, "Pivot"), Some(&Value::Vec2(Vec2::new(0.0, 1.0))));
-    assert_eq!(w2.get_prop(h, "Scale"), Some(&Value::Vec2(Vec2::new(1.5, 2.0))));
+    assert_eq!(
+        w2.get_prop(h, "Pivot"),
+        Some(&Value::Vec2(Vec2::new(0.0, 1.0)))
+    );
+    assert_eq!(
+        w2.get_prop(h, "Scale"),
+        Some(&Value::Vec2(Vec2::new(1.5, 2.0)))
+    );
     assert_eq!(w2.get_prop(h, "Locked"), Some(&Value::Bool(true)));
 }
 
@@ -318,6 +357,108 @@ fn loading_legacy_scene_gains_scripts_service() {
         }
     }"#;
     let w = World::from_json(json).expect("load legacy scene");
-    assert!(w.scripts().is_some(), "Scripts service should be auto-added on load");
-    assert!(w.service("Storage").is_some(), "Storage service should be auto-added on load");
+    assert!(
+        w.scripts().is_some(),
+        "Scripts service should be auto-added on load"
+    );
+    assert!(
+        w.service("Storage").is_some(),
+        "Storage service should be auto-added on load"
+    );
+}
+
+#[test]
+fn animated_sprite_serializes_config_not_runtime_state() {
+    let mut w = World::new();
+    let ws = w.workspace();
+    let s = w.create("AnimatedSprite", ws).unwrap();
+    w.set_prop(s, "Animation", Value::String("Run".into()))
+        .unwrap();
+    // Runtime state as if playback advanced.
+    w.set_prop(s, "CurrentFrame", Value::Number(5.0)).unwrap();
+    w.set_prop(s, "TimePosition", Value::Number(0.683)).unwrap();
+    w.set_prop(s, "Playing", Value::Bool(true)).unwrap();
+
+    let json = w.to_json();
+    assert!(
+        json.contains("Animation") && json.contains("Run"),
+        "authored Animation must serialize"
+    );
+    assert!(
+        !json.contains("CurrentFrame"),
+        "transient CurrentFrame must not serialize"
+    );
+    assert!(
+        !json.contains("TimePosition"),
+        "transient TimePosition must not serialize"
+    );
+
+    // Reload: authored Animation preserved, transient state back at defaults.
+    let w2 = World::from_json(&json).unwrap();
+    let s2 = w2
+        .find_first_child(w2.workspace(), "AnimatedSprite")
+        .unwrap();
+    assert_eq!(
+        w2.get_prop(s2, "Animation"),
+        Some(&Value::String("Run".into()))
+    );
+    assert_eq!(w2.get_prop(s2, "CurrentFrame"), Some(&Value::Number(0.0)));
+    assert!(matches!(
+        w2.get_prop(s2, "Playing"),
+        Some(Value::Bool(false))
+    ));
+}
+
+#[test]
+fn legacy_sprite_animation_player_migrates_to_animated_sprite() {
+    // A hand-written legacy scene: a Sprite "Hero" with an AnimationPlayer child.
+    let json = r#"{
+        "version": 1,
+        "root": { "class": "Game", "name": "Game", "children": [
+            { "class": "Workspace", "name": "Workspace", "children": [
+                { "class": "Sprite", "name": "Hero",
+                  "props": { "Tint": { "t": "Color", "v": [1.0, 0.0, 0.0, 1.0] } },
+                  "children": [
+                    { "class": "AnimationPlayer", "name": "Anim", "props": {
+                        "Frames": { "t": "Asset", "v": "hero.spriteframes" },
+                        "AutoPlay": { "t": "String", "v": "Run" }
+                    } }
+                  ] }
+            ] }
+        ] }
+    }"#;
+
+    let w = World::from_json(json).expect("legacy scene should load");
+    let ws = w.workspace();
+    let hero = w
+        .find_first_child(ws, "Hero")
+        .expect("migrated node present");
+    assert_eq!(w.class_name(hero), Some("AnimatedSprite"));
+    assert_eq!(
+        w.get_prop(hero, "Frames"),
+        Some(&Value::Asset("hero.spriteframes".into()))
+    );
+    assert_eq!(
+        w.get_prop(hero, "Animation"),
+        Some(&Value::String("Run".into()))
+    );
+    assert!(matches!(
+        w.get_prop(hero, "AutoPlay"),
+        Some(Value::Bool(true))
+    ));
+    // Visual config carried over from the Sprite.
+    assert_eq!(
+        w.get_prop(hero, "Tint"),
+        Some(&Value::Color(Color::new(1.0, 0.0, 0.0, 1.0)))
+    );
+    // The old Sprite and player are gone.
+    assert!(w.find_first_child(ws, "Anim").is_none());
+    assert_eq!(
+        w.children(ws)
+            .iter()
+            .filter(|&&c| w.class_name(c) == Some("Sprite"))
+            .count(),
+        0,
+        "legacy Sprite should be replaced"
+    );
 }

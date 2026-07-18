@@ -1,7 +1,5 @@
 use flux_core::{CoreError, InstanceId, Value, ValueType, World, registry};
-use mlua::{
-    IntoLua, Lua, MetaMethod, UserData, UserDataMethods, UserDataRef, Value as LuaValue,
-};
+use mlua::{IntoLua, Lua, MetaMethod, UserData, UserDataMethods, UserDataRef, Value as LuaValue};
 
 use crate::signal::{LuaSignal, Signal};
 use crate::types::{LuaColor, LuaRect, LuaUDim2, LuaVec2, as_color, as_rect, as_udim2, as_vec2};
@@ -19,7 +17,11 @@ fn lua_err(e: CoreError) -> mlua::Error {
 }
 
 fn check(w: &World, id: InstanceId) -> mlua::Result<()> {
-    if w.contains(id) { Ok(()) } else { Err(destroyed()) }
+    if w.contains(id) {
+        Ok(())
+    } else {
+        Err(destroyed())
+    }
 }
 
 fn is_button(w: &World, id: InstanceId) -> bool {
@@ -29,12 +31,12 @@ fn is_button(w: &World, id: InstanceId) -> bool {
     )
 }
 
-fn is_player(w: &World, id: InstanceId) -> bool {
-    w.class_name(id) == Some("AnimationPlayer")
+fn is_animated_sprite(w: &World, id: InstanceId) -> bool {
+    w.class_name(id) == Some("AnimatedSprite")
 }
 
 fn anim_only(method: &str) -> mlua::Error {
-    mlua::Error::RuntimeError(format!("{method} can only be called on an AnimationPlayer"))
+    mlua::Error::RuntimeError(format!("{method} can only be called on an AnimatedSprite"))
 }
 
 fn aabb(w: &World, id: InstanceId) -> Option<(glam::Vec2, glam::Vec2)> {
@@ -151,43 +153,35 @@ impl UserData for LuaInstance {
             }
             Ok(out)
         });
-        // ---- AnimationPlayer controls ----
-        m.add_method("Play", |lua, this, (clip, restart): (String, Option<bool>)| {
-            let rc = world_handle(lua);
-            let mut w = rc.borrow_mut();
-            check(&w, this.0)?;
-            if !is_player(&w, this.0) {
-                return Err(anim_only("Play"));
-            }
-            let cache = crate::anim_cache(lua);
-            let root = crate::anim_root(lua);
-            flux_core::animation::play(
-                &mut w,
-                &mut cache.borrow_mut(),
-                &root,
-                this.0,
-                &clip,
-                restart.unwrap_or(false),
-            );
-            Ok(())
-        });
+        // ---- AnimatedSprite controls ----
+        m.add_method(
+            "Play",
+            |lua, this, (animation, restart): (String, Option<bool>)| {
+                let rc = world_handle(lua);
+                let mut w = rc.borrow_mut();
+                check(&w, this.0)?;
+                if !is_animated_sprite(&w, this.0) {
+                    return Err(anim_only("Play"));
+                }
+                flux_core::animation::play(&mut w, this.0, &animation, restart.unwrap_or(false));
+                Ok(())
+            },
+        );
         m.add_method("Stop", |lua, this, ()| {
             let rc = world_handle(lua);
             let mut w = rc.borrow_mut();
             check(&w, this.0)?;
-            if !is_player(&w, this.0) {
+            if !is_animated_sprite(&w, this.0) {
                 return Err(anim_only("Stop"));
             }
-            let cache = crate::anim_cache(lua);
-            let root = crate::anim_root(lua);
-            flux_core::animation::stop(&mut w, &mut cache.borrow_mut(), &root, this.0);
+            flux_core::animation::stop(&mut w, this.0);
             Ok(())
         });
         m.add_method("Pause", |lua, this, ()| {
             let rc = world_handle(lua);
             let mut w = rc.borrow_mut();
             check(&w, this.0)?;
-            if !is_player(&w, this.0) {
+            if !is_animated_sprite(&w, this.0) {
                 return Err(anim_only("Pause"));
             }
             flux_core::animation::pause(&mut w, this.0);
@@ -197,7 +191,7 @@ impl UserData for LuaInstance {
             let rc = world_handle(lua);
             let mut w = rc.borrow_mut();
             check(&w, this.0)?;
-            if !is_player(&w, this.0) {
+            if !is_animated_sprite(&w, this.0) {
                 return Err(anim_only("Resume"));
             }
             flux_core::animation::resume(&mut w, this.0);
@@ -239,12 +233,10 @@ fn index(lua: &Lua, id: InstanceId, key: &str) -> mlua::Result<LuaValue> {
                 .clone();
             LuaSignal(signal).into_lua(lua)
         }
-        "IsPlaying" if is_player(&w, id) => {
-            Ok(LuaValue::Boolean(matches!(
-                w.get_prop(id, "Playing"),
-                Some(Value::Bool(true))
-            )))
-        }
+        "IsPlaying" if is_animated_sprite(&w, id) => Ok(LuaValue::Boolean(matches!(
+            w.get_prop(id, "Playing"),
+            Some(Value::Bool(true))
+        ))),
         "Activated" if is_button(&w, id) => {
             let signals = lua
                 .app_data_ref::<crate::ButtonSignals>()
@@ -257,7 +249,11 @@ fn index(lua: &Lua, id: InstanceId, key: &str) -> mlua::Result<LuaValue> {
             let screen = flux_core::Rect2::from_screen(input_handle(lua).borrow().viewport);
             let rect = flux_core::gui::absolute_rect(&w, id, screen)
                 .unwrap_or(flux_core::Rect2::new(glam::Vec2::ZERO, glam::Vec2::ZERO));
-            let v = if key == "AbsolutePosition" { rect.min } else { rect.size };
+            let v = if key == "AbsolutePosition" {
+                rect.min
+            } else {
+                rect.size
+            };
             LuaVec2(v).into_lua(lua)
         }
         _ => {

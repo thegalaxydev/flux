@@ -1,5 +1,5 @@
-use flux_core::{Color, InstanceId, Rect, UDim2, Value, World};
 use eframe::egui::{self, Ui};
+use flux_core::{Color, InstanceId, Rect, UDim2, Value, World};
 
 use crate::app::{Pending, UiState};
 use crate::command::Command;
@@ -31,13 +31,16 @@ pub fn show(ui: &mut Ui, world: &World, state: &mut UiState) {
                 }
             });
 
-        // AnimationPlayer: a shortcut into the animation editor for its library.
-        if world.class_name(id) == Some("AnimationPlayer") {
+        // AnimatedSprite: a shortcut into the animation editor for its library.
+        if world.class_name(id) == Some("AnimatedSprite") {
             if let Some(Value::Asset(frames)) = world.get_prop(id, "Frames") {
                 let frames = frames.clone();
                 ui.separator();
                 if ui
-                    .add_enabled(!frames.is_empty(), egui::Button::new("Edit Animation Library…"))
+                    .add_enabled(
+                        !frames.is_empty(),
+                        egui::Button::new("Edit Animation Library…"),
+                    )
                     .clicked()
                 {
                     state.open_animation = Some(frames);
@@ -86,16 +89,14 @@ fn value_widget(ui: &mut Ui, world: &World, prop: &str, value: &Value) -> Option
                 })
                 .inner;
             (rx.changed() || ry.changed()).then(|| {
-                let merge =
-                    rx.dragged() || ry.dragged() || rx.has_focus() || ry.has_focus();
+                let merge = rx.dragged() || ry.dragged() || rx.has_focus() || ry.has_focus();
                 (Value::Vec2(glam::Vec2::new(x, y)), merge)
             })
         }
         Value::String(s) => {
             let mut v = s.clone();
             let resp = ui.text_edit_singleline(&mut v);
-            resp.changed()
-                .then(|| (Value::String(v), resp.has_focus()))
+            resp.changed().then(|| (Value::String(v), resp.has_focus()))
         }
         Value::Asset(s) => {
             let mut v = s.clone();
@@ -107,7 +108,10 @@ fn value_widget(ui: &mut Ui, world: &World, prop: &str, value: &Value) -> Option
             let resp = ui.color_edit_button_rgba_unmultiplied(&mut arr);
             resp.changed().then(|| {
                 let merge = ui.input(|i| i.pointer.any_down());
-                (Value::Color(Color::new(arr[0], arr[1], arr[2], arr[3])), merge)
+                (
+                    Value::Color(Color::new(arr[0], arr[1], arr[2], arr[3])),
+                    merge,
+                )
             })
         }
         Value::Rect(r) => {
@@ -169,14 +173,22 @@ fn udim2_widget(ui: &mut Ui, prop: &str, u: UDim2) -> Option<(Value, bool)> {
     let resp = ui.vertical(|ui| {
         let rx = ui
             .horizontal(|ui| {
-                let a = ui.add(egui::DragValue::new(&mut xs).speed(0.01).prefix(format!("{ax} Scale ")));
+                let a = ui.add(
+                    egui::DragValue::new(&mut xs)
+                        .speed(0.01)
+                        .prefix(format!("{ax} Scale ")),
+                );
                 let b = ui.add(egui::DragValue::new(&mut xo).speed(0.5).prefix("Offset "));
                 (a, b)
             })
             .inner;
         let ry = ui
             .horizontal(|ui| {
-                let a = ui.add(egui::DragValue::new(&mut ys).speed(0.01).prefix(format!("{ay} Scale ")));
+                let a = ui.add(
+                    egui::DragValue::new(&mut ys)
+                        .speed(0.01)
+                        .prefix(format!("{ay} Scale ")),
+                );
                 let b = ui.add(egui::DragValue::new(&mut yo).speed(0.5).prefix("Offset "));
                 (a, b)
             })

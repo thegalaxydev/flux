@@ -55,7 +55,13 @@ pub struct ClipDoc {
 
 impl Default for ClipDoc {
     fn default() -> Self {
-        Self { looped: true, speed: 1.0, texture: None, frames: Vec::new(), events: Vec::new() }
+        Self {
+            looped: true,
+            speed: 1.0,
+            texture: None,
+            frames: Vec::new(),
+            events: Vec::new(),
+        }
     }
 }
 
@@ -199,7 +205,10 @@ impl SpriteFrames {
                 (name.clone(), Rc::new(clip))
             })
             .collect();
-        SpriteFrames { default_texture: doc.texture.clone(), clips }
+        SpriteFrames {
+            default_texture: doc.texture.clone(),
+            clips,
+        }
     }
 }
 
@@ -237,7 +246,11 @@ impl AnimationCache {
 }
 
 // ---------------------------------------------------------------------------
-// Instance helpers
+// AnimatedSprite playback
+//
+// An `AnimatedSprite` owns its playback state as transient properties and is
+// drawn directly by the renderer (via `current_frame`). Nothing here mutates
+// any other node.
 // ---------------------------------------------------------------------------
 
 fn num(world: &World, id: InstanceId, name: &str) -> f64 {
@@ -258,119 +271,96 @@ fn flag(world: &World, id: InstanceId, name: &str) -> bool {
     matches!(world.get_prop(id, name), Some(Value::Bool(true)))
 }
 
-/// The Sprite an `AnimationPlayer` drives: its parent, if that parent is a Sprite.
-pub fn target(world: &World, player: InstanceId) -> Option<InstanceId> {
-    let parent = world.parent(player)?;
-    (world.class_name(parent) == Some("Sprite")).then_some(parent)
-}
-
-fn players(world: &World) -> Vec<InstanceId> {
+fn animated_sprites(world: &World) -> Vec<InstanceId> {
     world
         .descendants(world.workspace())
         .into_iter()
-        .filter(|&id| world.class_name(id) == Some("AnimationPlayer"))
+        .filter(|&id| world.class_name(id) == Some("AnimatedSprite"))
         .collect()
 }
 
-/// Write the target Sprite's `Texture`/`SourceRect` for the player's current
-/// frame of `clip`. Texture falls back frame -> clip -> library default; if none
-/// is specified the Sprite keeps whatever texture it already has.
-fn write_frame(world: &mut World, player: InstanceId, frames: &SpriteFrames, clip: &Clip) {
-    let Some(target) = target(world, player) else { return };
-    let idx = (num(world, player, "CurrentFrame") as usize).min(clip.frames.len().saturating_sub(1));
-    let Some(frame) = clip.frames.get(idx) else { return };
-    if let Some(tex) = frame
-        .texture
-        .as_deref()
-        .or(clip.texture.as_deref())
-        .or_else(|| frames.default_texture())
-    {
-        let _ = world.set_prop(target, "Texture", Value::Asset(tex.to_string()));
-    }
-    let _ = world.set_prop(target, "SourceRect", Value::Rect(frame.rect));
-}
-
-/// Resolve the library + active clip for a player, if both are available.
+/// Resolve the library + selected clip for an `AnimatedSprite`, if available.
 fn resolve(
     world: &World,
     cache: &mut AnimationCache,
     root: &Path,
-    player: InstanceId,
+    sprite: InstanceId,
 ) -> Option<(Rc<SpriteFrames>, Rc<Clip>)> {
-    let frames = cache.get(&text(world, player, "Frames"), root)?;
-    let clip = frames.clip(&text(world, player, "CurrentClip"))?;
+    let frames = cache.get(&text(world, sprite, "Frames"), root)?;
+    let clip = frames.clip(&text(world, sprite, "Animation"))?;
     Some((frames, clip))
 }
 
-// ---------------------------------------------------------------------------
-// Playback control (called from the Lua bridge and the editor)
-// ---------------------------------------------------------------------------
-
-/// `:Play(name)` — switch to clip `name` and play from the start. Honors the
-/// no-restart rule: if `name` is already the current clip and it is playing,
-/// this is a no-op unless `restart` is set.
-pub fn play(
-    world: &mut World,
+/// The `(texture, source rect)` the renderer should draw for `sprite`'s current
+/// frame, or `None` if its `Frames`/`Animation` don't resolve. The texture is
+/// the single source of truth from the library: frame -> clip -> default.
+pub fn current_frame(
+    world: &World,
     cache: &mut AnimationCache,
     root: &Path,
-    player: InstanceId,
-    clip: &str,
-    restart: bool,
-) {
-    if !restart && flag(world, player, "Playing") && text(world, player, "CurrentClip") == clip {
+    sprite: InstanceId,
+) -> Option<(Option<String>, Rect)> {
+    let (frames, clip) = resolve(world, cache, root, sprite)?;
+    if clip.frames.is_empty() {
+        return None;
+    }
+    let idx = (num(world, sprite, "CurrentFrame") as usize).min(clip.frames.len() - 1);
+    let frame = &clip.frames[idx];
+    let texture = frame
+        .texture
+        .clone()
+        .or_else(|| clip.texture.clone())
+        .or_else(|| frames.default_texture().map(str::to_string));
+    Some((texture, frame.rect))
+}
+
+// ---- playback control (Lua + editor) — pure property setters ----------------
+
+/// `:Play(name)` — select `name` and play from the start. No-op if `name` is
+/// already playing, unless `restart` is set.
+pub fn play(world: &mut World, sprite: InstanceId, animation: &str, restart: bool) {
+    if !restart && flag(world, sprite, "Playing") && text(world, sprite, "Animation") == animation {
         return;
     }
-    let _ = world.set_prop(player, "CurrentClip", Value::String(clip.to_string()));
-    let _ = world.set_prop(player, "TimePosition", Value::Number(0.0));
-    let _ = world.set_prop(player, "CurrentFrame", Value::Number(0.0));
-    let _ = world.set_prop(player, "Playing", Value::Bool(true));
-    if let Some((frames, clip)) = resolve(world, cache, root, player) {
-        write_frame(world, player, &frames, &clip);
-    }
+    let _ = world.set_prop(sprite, "Animation", Value::String(animation.to_string()));
+    let _ = world.set_prop(sprite, "TimePosition", Value::Number(0.0));
+    let _ = world.set_prop(sprite, "CurrentFrame", Value::Number(0.0));
+    let _ = world.set_prop(sprite, "Playing", Value::Bool(true));
 }
 
 /// `:Pause()` — freeze on the current frame.
-pub fn pause(world: &mut World, player: InstanceId) {
-    let _ = world.set_prop(player, "Playing", Value::Bool(false));
+pub fn pause(world: &mut World, sprite: InstanceId) {
+    let _ = world.set_prop(sprite, "Playing", Value::Bool(false));
 }
 
 /// `:Resume()` — continue from the current `TimePosition`.
-pub fn resume(world: &mut World, player: InstanceId) {
-    let _ = world.set_prop(player, "Playing", Value::Bool(true));
+pub fn resume(world: &mut World, sprite: InstanceId) {
+    let _ = world.set_prop(sprite, "Playing", Value::Bool(true));
 }
 
 /// `:Stop()` — stop and reset to the first frame.
-pub fn stop(world: &mut World, cache: &mut AnimationCache, root: &Path, player: InstanceId) {
-    let _ = world.set_prop(player, "Playing", Value::Bool(false));
-    let _ = world.set_prop(player, "TimePosition", Value::Number(0.0));
-    let _ = world.set_prop(player, "CurrentFrame", Value::Number(0.0));
-    if let Some((frames, clip)) = resolve(world, cache, root, player) {
-        write_frame(world, player, &frames, &clip);
-    }
+pub fn stop(world: &mut World, sprite: InstanceId) {
+    let _ = world.set_prop(sprite, "Playing", Value::Bool(false));
+    let _ = world.set_prop(sprite, "TimePosition", Value::Number(0.0));
+    let _ = world.set_prop(sprite, "CurrentFrame", Value::Number(0.0));
 }
 
-// ---------------------------------------------------------------------------
-// Per-session lifecycle
-// ---------------------------------------------------------------------------
+// ---- per-session lifecycle --------------------------------------------------
 
-/// Prepare players for a fresh session: reset each, then start any whose
-/// `AutoPlay` names a clip.
-pub fn init(world: &mut World, cache: &mut AnimationCache, root: &Path) {
-    for id in players(world) {
-        let auto = text(world, id, "AutoPlay");
+/// Prepare `AnimatedSprite`s for a fresh session: reset transient state, then
+/// start any with `AutoPlay` set and an `Animation` selected.
+pub fn init(world: &mut World) {
+    for id in animated_sprites(world) {
         let _ = world.set_prop(id, "TimePosition", Value::Number(0.0));
         let _ = world.set_prop(id, "CurrentFrame", Value::Number(0.0));
-        if auto.is_empty() {
-            let _ = world.set_prop(id, "Playing", Value::Bool(false));
-        } else {
-            play(world, cache, root, id, &auto, true);
-        }
+        let autoplay = flag(world, id, "AutoPlay") && !text(world, id, "Animation").is_empty();
+        let _ = world.set_prop(id, "Playing", Value::Bool(autoplay));
     }
 }
 
-/// Advance every playing `AnimationPlayer` by `dt` seconds.
+/// Advance every playing `AnimatedSprite` by `dt` seconds.
 pub fn advance(world: &mut World, cache: &mut AnimationCache, root: &Path, dt: f64) {
-    for id in players(world) {
+    for id in animated_sprites(world) {
         if flag(world, id, "Playing") {
             step_one(world, cache, root, id, dt);
         }
@@ -378,12 +368,14 @@ pub fn advance(world: &mut World, cache: &mut AnimationCache, root: &Path, dt: f
 }
 
 fn step_one(world: &mut World, cache: &mut AnimationCache, root: &Path, id: InstanceId, dt: f64) {
-    let Some((frames, clip)) = resolve(world, cache, root, id) else { return };
+    let Some((_frames, clip)) = resolve(world, cache, root, id) else {
+        return;
+    };
     let total = clip.total();
     if clip.frames.is_empty() || total <= 0.0 {
         return;
     }
-    let speed = num(world, id, "Speed") as f32 * clip.speed;
+    let speed = num(world, id, "SpeedScale") as f32 * clip.speed;
     let mut t = num(world, id, "TimePosition") as f32 + dt as f32 * speed;
 
     if t >= total {
@@ -394,24 +386,25 @@ fn step_one(world: &mut World, cache: &mut AnimationCache, root: &Path, id: Inst
             let _ = world.set_prop(id, "TimePosition", Value::Number(total as f64));
             let _ = world.set_prop(id, "CurrentFrame", Value::Number(last as f64));
             let _ = world.set_prop(id, "Playing", Value::Bool(false));
-            write_frame(world, id, &frames, &clip);
             return;
         }
     } else if t < 0.0 {
-        // Negative speed before the start: clamp (reverse looping can come later).
-        t = if clip.looped { t.rem_euclid(total) } else { 0.0 };
+        t = if clip.looped {
+            t.rem_euclid(total)
+        } else {
+            0.0
+        };
     }
 
     let idx = clip.frame_at(t);
     let _ = world.set_prop(id, "TimePosition", Value::Number(t as f64));
     let _ = world.set_prop(id, "CurrentFrame", Value::Number(idx as f64));
-    write_frame(world, id, &frames, &clip);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::Path;
 
     const LIB: &str = r#"{
         "texture": "hero.png",
@@ -432,32 +425,29 @@ mod tests {
         }
     }"#;
 
-    /// A world with a Sprite + AnimationPlayer, a cache pre-seeded with LIB, and
-    /// the player's `Frames` pointed at it (loaded from an in-memory entry).
-    fn setup() -> (World, AnimationCache, PathBuf, InstanceId, InstanceId) {
+    /// A workspace with one `AnimatedSprite` whose `Frames` points at LIB, plus a
+    /// cache pre-seeded from LIB (so tests never touch the filesystem).
+    fn setup() -> (World, AnimationCache, InstanceId) {
         let mut w = World::new();
         let ws = w.workspace();
-        let sprite = w.create("Sprite", ws).unwrap();
-        let player = w.create("AnimationPlayer", sprite).unwrap();
-        w.set_prop(player, "Frames", Value::Asset("hero.frames.json".into())).unwrap();
-
-        // Seed the cache directly so tests don't touch the filesystem.
+        let s = w.create("AnimatedSprite", ws).unwrap();
+        w.set_prop(s, "Frames", Value::Asset("hero.frames.json".into()))
+            .unwrap();
         let mut cache = AnimationCache::default();
-        cache
-            .libs
-            .insert("hero.frames.json".into(), Some(Rc::new(SpriteFrames::parse(LIB).unwrap())));
-        (w, cache, PathBuf::from("."), sprite, player)
+        cache.libs.insert(
+            "hero.frames.json".into(),
+            Some(Rc::new(SpriteFrames::parse(LIB).unwrap())),
+        );
+        (w, cache, s)
     }
 
-    fn rect(w: &World, sprite: InstanceId) -> Rect {
-        match w.get_prop(sprite, "SourceRect") {
-            Some(Value::Rect(r)) => *r,
-            _ => Rect::default(),
-        }
+    fn root() -> &'static Path {
+        Path::new(".")
     }
 
-    fn texture(w: &World, sprite: InstanceId) -> String {
-        text(w, sprite, "Texture")
+    /// The `(texture, rect)` the renderer would draw for `s` right now.
+    fn cur(w: &World, c: &mut AnimationCache, s: InstanceId) -> (Option<String>, Rect) {
+        current_frame(w, c, root(), s).expect("current_frame resolved")
     }
 
     #[test]
@@ -467,7 +457,6 @@ mod tests {
         let run = f.clip("Run").unwrap();
         assert_eq!(run.frames.len(), 3);
         assert!((run.total() - 0.4).abs() < 1e-6); // 0.1 + 0.2 + 0.1
-        // Variable timing: frame lookup respects the long middle frame.
         assert_eq!(run.frame_at(0.0), 0);
         assert_eq!(run.frame_at(0.15), 1);
         assert_eq!(run.frame_at(0.25), 1);
@@ -475,87 +464,101 @@ mod tests {
     }
 
     #[test]
-    fn play_sets_first_frame_and_texture() {
-        let (mut w, mut c, root, sprite, player) = setup();
-        play(&mut w, &mut c, &root, player, "Run", false);
-        assert_eq!(rect(&w, sprite), Rect::new(0.0, 16.0, 16.0, 16.0));
-        assert_eq!(texture(&w, sprite), "hero.png"); // library default
+    fn play_selects_first_frame_and_library_texture() {
+        let (mut w, mut c, s) = setup();
+        play(&mut w, s, "Run", false);
+        let (tex, r) = cur(&w, &mut c, s);
+        assert_eq!(r, Rect::new(0.0, 16.0, 16.0, 16.0));
+        assert_eq!(tex.as_deref(), Some("hero.png")); // library default
+        assert!(flag(&w, s, "Playing"));
     }
 
     #[test]
     fn advance_walks_frames_with_variable_timing() {
-        let (mut w, mut c, root, sprite, player) = setup();
-        play(&mut w, &mut c, &root, player, "Run", false);
-        advance(&mut w, &mut c, &root, 0.1); // -> frame 1 (the wide one)
-        assert_eq!(rect(&w, sprite), Rect::new(16.0, 16.0, 18.0, 16.0));
-        advance(&mut w, &mut c, &root, 0.2); // 0.3 total -> frame 2
-        assert_eq!(rect(&w, sprite), Rect::new(34.0, 16.0, 16.0, 16.0));
+        let (mut w, mut c, s) = setup();
+        play(&mut w, s, "Run", false);
+        advance(&mut w, &mut c, root(), 0.1); // -> frame 1 (the wide one)
+        assert_eq!(cur(&w, &mut c, s).1, Rect::new(16.0, 16.0, 18.0, 16.0));
+        advance(&mut w, &mut c, root(), 0.2); // 0.3 total -> frame 2
+        assert_eq!(cur(&w, &mut c, s).1, Rect::new(34.0, 16.0, 16.0, 16.0));
     }
 
     #[test]
     fn per_clip_texture_override_applies() {
-        let (mut w, mut c, root, sprite, player) = setup();
-        play(&mut w, &mut c, &root, player, "Attack", false);
-        assert_eq!(texture(&w, sprite), "hero_attack.png");
+        let (mut w, mut c, s) = setup();
+        play(&mut w, s, "Attack", false);
+        assert_eq!(cur(&w, &mut c, s).0.as_deref(), Some("hero_attack.png"));
     }
 
     #[test]
-    fn no_restart_when_replaying_same_clip() {
-        let (mut w, mut c, root, sprite, player) = setup();
-        play(&mut w, &mut c, &root, player, "Run", false);
-        advance(&mut w, &mut c, &root, 0.1); // frame 1
-        play(&mut w, &mut c, &root, player, "Run", false); // same clip, playing
-        assert_eq!(num(&w, player, "CurrentFrame") as i64, 1); // NOT reset
-        // But a different clip switches immediately.
-        play(&mut w, &mut c, &root, player, "Idle", false);
-        assert_eq!(rect(&w, sprite), Rect::new(0.0, 0.0, 16.0, 16.0));
-        // And an explicit restart resets even the same clip.
-        advance(&mut w, &mut c, &root, 0.1);
-        play(&mut w, &mut c, &root, player, "Idle", true);
-        assert_eq!(num(&w, player, "CurrentFrame") as i64, 0);
+    fn no_restart_by_default_forced_restart_works() {
+        let (mut w, mut c, s) = setup();
+        play(&mut w, s, "Run", false);
+        advance(&mut w, &mut c, root(), 0.1); // frame 1
+        play(&mut w, s, "Run", false); // same animation, playing -> no-op
+        assert_eq!(num(&w, s, "CurrentFrame") as i64, 1);
+        // A different animation switches immediately.
+        play(&mut w, s, "Idle", false);
+        assert_eq!(cur(&w, &mut c, s).1, Rect::new(0.0, 0.0, 16.0, 16.0));
+        // Forced restart resets even the same animation.
+        advance(&mut w, &mut c, root(), 0.1);
+        play(&mut w, s, "Idle", true);
+        assert_eq!(num(&w, s, "CurrentFrame") as i64, 0);
     }
 
     #[test]
     fn looped_wraps_non_looped_stops_on_last() {
-        let (mut w, mut c, root, _sprite, player) = setup();
-        play(&mut w, &mut c, &root, player, "Idle", false); // looped, total 0.2
-        advance(&mut w, &mut c, &root, 0.25); // wraps to 0.05 -> frame 0
-        assert_eq!(num(&w, player, "CurrentFrame") as i64, 0);
-        assert!(flag(&w, player, "Playing"));
+        let (mut w, mut c, s) = setup();
+        play(&mut w, s, "Idle", false); // looped, total 0.2
+        advance(&mut w, &mut c, root(), 0.25); // wraps to 0.05 -> frame 0
+        assert_eq!(num(&w, s, "CurrentFrame") as i64, 0);
+        assert!(flag(&w, s, "Playing"));
 
-        play(&mut w, &mut c, &root, player, "Attack", false); // not looped, total 0.1
-        advance(&mut w, &mut c, &root, 1.0);
-        assert_eq!(num(&w, player, "CurrentFrame") as i64, 1); // last frame
-        assert!(!flag(&w, player, "Playing"));
+        play(&mut w, s, "Attack", false); // not looped, total 0.1
+        advance(&mut w, &mut c, root(), 1.0);
+        assert_eq!(num(&w, s, "CurrentFrame") as i64, 1); // last frame
+        assert!(!flag(&w, s, "Playing"));
     }
 
     #[test]
     fn stop_resets_to_first_frame() {
-        let (mut w, mut c, root, sprite, player) = setup();
-        play(&mut w, &mut c, &root, player, "Run", false);
-        advance(&mut w, &mut c, &root, 0.15);
-        stop(&mut w, &mut c, &root, player);
-        assert!(!flag(&w, player, "Playing"));
-        assert_eq!(num(&w, player, "TimePosition"), 0.0);
-        assert_eq!(rect(&w, sprite), Rect::new(0.0, 16.0, 16.0, 16.0)); // frame 0 of Run
+        let (mut w, mut c, s) = setup();
+        play(&mut w, s, "Run", false);
+        advance(&mut w, &mut c, root(), 0.15);
+        stop(&mut w, s);
+        assert!(!flag(&w, s, "Playing"));
+        assert_eq!(num(&w, s, "TimePosition"), 0.0);
+        assert_eq!(cur(&w, &mut c, s).1, Rect::new(0.0, 16.0, 16.0, 16.0));
     }
 
     #[test]
-    fn autoplay_starts_named_clip_on_init() {
-        let (mut w, mut c, root, sprite, player) = setup();
-        w.set_prop(player, "AutoPlay", Value::String("Idle".into())).unwrap();
-        init(&mut w, &mut c, &root);
-        assert!(flag(&w, player, "Playing"));
-        assert_eq!(w.get_prop(player, "CurrentClip"), Some(&Value::String("Idle".into())));
-        assert_eq!(rect(&w, sprite), Rect::new(0.0, 0.0, 16.0, 16.0));
+    fn autoplay_starts_selected_animation_on_init() {
+        let (mut w, mut c, s) = setup();
+        w.set_prop(s, "Animation", Value::String("Idle".into()))
+            .unwrap();
+        w.set_prop(s, "AutoPlay", Value::Bool(true)).unwrap();
+        init(&mut w);
+        assert!(flag(&w, s, "Playing"));
+        assert_eq!(cur(&w, &mut c, s).1, Rect::new(0.0, 0.0, 16.0, 16.0));
     }
 
     #[test]
-    fn speed_scales_playback() {
-        let (mut w, mut c, root, _sprite, player) = setup();
-        w.set_prop(player, "Speed", Value::Number(2.0)).unwrap();
-        play(&mut w, &mut c, &root, player, "Run", false);
-        advance(&mut w, &mut c, &root, 0.05); // 0.05 * 2 = 0.1 -> frame 1
-        assert_eq!(num(&w, player, "CurrentFrame") as i64, 1);
+    fn speed_scale_scales_playback() {
+        let (mut w, mut c, s) = setup();
+        w.set_prop(s, "SpeedScale", Value::Number(2.0)).unwrap();
+        play(&mut w, s, "Run", false);
+        advance(&mut w, &mut c, root(), 0.05); // 0.05 * 2 = 0.1 -> frame 1
+        assert_eq!(num(&w, s, "CurrentFrame") as i64, 1);
+    }
+
+    #[test]
+    fn instances_share_cached_frames() {
+        let (_w, mut c, _s) = setup();
+        let a = c.get("hero.frames.json", root()).unwrap();
+        let b = c.get("hero.frames.json", root()).unwrap();
+        assert!(
+            Rc::ptr_eq(&a, &b),
+            "same library path must share one Rc<SpriteFrames>"
+        );
     }
 }

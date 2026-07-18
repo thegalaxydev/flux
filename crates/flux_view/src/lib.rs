@@ -8,6 +8,7 @@ use flux_core::gui::{self, Rect2};
 use flux_core::transform::SpriteXform;
 use flux_core::{ClassId, Color, InstanceId, Rect as SrcRect, Value, World, registry};
 
+pub use flux_core::animation::AnimationCache;
 pub use texture::TextureCache;
 
 /// Screen rect (top-left based) the GUI layer is laid out inside, as a [`Rect2`].
@@ -19,10 +20,7 @@ fn gui_screen(rect: Rect) -> Rect2 {
 }
 
 fn to_egui_rect(r: Rect2) -> Rect {
-    Rect::from_min_size(
-        egui::pos2(r.min.x, r.min.y),
-        egui::vec2(r.size.x, r.size.y),
-    )
+    Rect::from_min_size(egui::pos2(r.min.x, r.min.y), egui::vec2(r.size.x, r.size.y))
 }
 
 /// Absolute screen rect of a GuiObject, laid out inside `screen_rect`.
@@ -84,11 +82,13 @@ fn screen_aabb(corners: &[Pos2; 4]) -> Rect {
     r
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_scene(
     painter: &Painter,
     ctx: &egui::Context,
     world: &World,
     textures: &mut TextureCache,
+    anim: &mut flux_core::animation::AnimationCache,
     rect: Rect,
     camera: Camera,
     root: Option<&Path>,
@@ -99,17 +99,23 @@ pub fn draw_scene(
     let origin = rect.center();
     let to_screen = |x: f32, y: f32| origin + (egui::vec2(x, y) - camera.offset) * camera.zoom;
 
-    let mut sprites: Vec<(InstanceId, f64)> = world
+    // Both Sprites and AnimatedSprites render as textured quads, ordered by ZIndex.
+    let mut nodes: Vec<(InstanceId, f64)> = world
         .descendants(world.workspace())
         .into_iter()
-        .filter(|&id| world.class_name(id) == Some("Sprite"))
+        .filter(|&id| {
+            matches!(
+                world.class_name(id),
+                Some("Sprite") | Some("AnimatedSprite")
+            )
+        })
         .map(|id| (id, zindex(world, id)))
         .collect();
-    sprites.sort_by(|a, b| a.1.total_cmp(&b.1));
+    nodes.sort_by(|a, b| a.1.total_cmp(&b.1));
 
-    let _ = selection; // sprite selection adornments are drawn by the editor.
+    let _ = selection; // selection adornments are drawn by the editor.
     let mut drawn = Vec::new();
-    for (id, _) in sprites {
+    for (id, _) in nodes {
         let (Some(xf), Some(Value::Color(tint))) =
             (SpriteXform::read(world, id), world.get_prop(id, "Tint"))
         else {
@@ -120,34 +126,56 @@ pub fn draw_scene(
         let aabb = screen_aabb(&corners);
         let visible = matches!(world.get_prop(id, "Visible"), Some(Value::Bool(true)));
         let locked = matches!(world.get_prop(id, "Locked"), Some(Value::Bool(true)));
-        // Only visible, unlocked sprites are click-selectable in the editor.
+        // Only visible, unlocked nodes are click-selectable in the editor.
         if visible && !locked {
             drawn.push((id, aabb));
         }
-
         if !visible || !rect.intersects(aabb) {
             continue;
         }
         let tint_color = to_color(tint);
-        let tex = root.and_then(|root| match world.get_prop(id, "Texture") {
-            Some(Value::Asset(p)) if !p.is_empty() => textures.get(ctx, root, p),
-            _ => None,
-        });
-        if let Some(handle) = tex {
-            let flip_x = matches!(world.get_prop(id, "FlipX"), Some(Value::Bool(true)));
-            let flip_y = matches!(world.get_prop(id, "FlipY"), Some(Value::Bool(true)));
-            // Map the SourceRect (in texture pixels) to UVs; a whole-texture
-            // rect (zero size) uses the full 0..1 range. Flips swap the edges.
+
+        // Resolve the texture + source rect. An AnimatedSprite gets both from its
+        // current frame (single source of truth); a Sprite from its own props.
+        let (handle, src) = if world.class_name(id) == Some("AnimatedSprite") {
+            match root.and_then(|r| flux_core::animation::current_frame(world, anim, r, id)) {
+                Some((tex, rect)) => {
+                    let h = match (tex, root) {
+                        (Some(p), Some(r)) if !p.is_empty() => textures.get(ctx, r, &p),
+                        _ => None,
+                    };
+                    (h, rect)
+                }
+                None => (None, SrcRect::default()),
+            }
+        } else {
+            let h = root.and_then(|r| match world.get_prop(id, "Texture") {
+                Some(Value::Asset(p)) if !p.is_empty() => textures.get(ctx, r, p),
+                _ => None,
+            });
             let src = match world.get_prop(id, "SourceRect") {
                 Some(Value::Rect(r)) => *r,
                 _ => SrcRect::default(),
             };
+            (h, src)
+        };
+
+        if let Some(handle) = handle {
+            let flip_x = matches!(world.get_prop(id, "FlipX"), Some(Value::Bool(true)));
+            let flip_y = matches!(world.get_prop(id, "FlipY"), Some(Value::Bool(true)));
+            // Map the SourceRect (texture pixels) to UVs; a whole-texture rect
+            // (zero size) uses the full 0..1 range. Flips swap the edges.
             let sz = handle.size();
             let (tw, th) = (sz[0] as f32, sz[1] as f32);
             let (mut u0, mut v0, mut u1, mut v1) = if src.is_whole() || tw <= 0.0 || th <= 0.0 {
                 (0.0, 0.0, 1.0, 1.0)
             } else {
-                (src.x / tw, src.y / th, (src.x + src.w) / tw, (src.y + src.h) / th)
+                (
+                    src.x / tw,
+                    src.y / th,
+                    (src.x + src.w) / tw,
+                    (src.y + src.h) / th,
+                )
             };
             if flip_x {
                 std::mem::swap(&mut u0, &mut u1);
@@ -164,16 +192,26 @@ pub fn draw_scene(
             ];
             let mut mesh = Mesh::with_texture(handle.id());
             for (pos, uv) in corners.iter().zip(uvs) {
-                mesh.vertices.push(Vertex { pos: *pos, uv, color: tint_color });
+                mesh.vertices.push(Vertex {
+                    pos: *pos,
+                    uv,
+                    color: tint_color,
+                });
             }
             mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
             painter.add(Shape::mesh(mesh));
         } else {
-            painter.add(Shape::convex_polygon(corners.to_vec(), tint_color, Stroke::NONE));
+            painter.add(Shape::convex_polygon(
+                corners.to_vec(),
+                tint_color,
+                Stroke::NONE,
+            ));
         }
     }
 
-    let gui_rects = draw_gui(painter, ctx, textures, root, world, rect, playing, pointer, selection);
+    let gui_rects = draw_gui(
+        painter, ctx, textures, root, world, rect, playing, pointer, selection,
+    );
     drawn.extend(gui_rects);
     drawn
 }
@@ -196,9 +234,7 @@ fn draw_gui(
     let Some(gui) = world.gui() else { return hit };
     let screen = gui_screen(rect);
     let button = registry().find("Button");
-    let is_a = |id: InstanceId, class: Option<ClassId>| {
-        matches!((world.class_of(id), class), (Some(c), Some(t)) if registry().is_a(c, t))
-    };
+    let is_a = |id: InstanceId, class: Option<ClassId>| matches!((world.class_of(id), class), (Some(c), Some(t)) if registry().is_a(c, t));
 
     let mut items: Vec<(InstanceId, f64)> = world
         .descendants(gui)
@@ -224,10 +260,26 @@ fn draw_gui(
         hit.push((id, r));
 
         let clipped = painter.with_clip_rect(to_egui_rect(clip));
-        draw_gui_object(&clipped, ctx, textures, root, world, id, r, is_a(id, button), playing, pointer);
+        draw_gui_object(
+            &clipped,
+            ctx,
+            textures,
+            root,
+            world,
+            id,
+            r,
+            is_a(id, button),
+            playing,
+            pointer,
+        );
 
         if !playing && selection == Some(id) {
-            painter.rect_stroke(r.expand(1.0), 3.0, Stroke::new(1.5, SELECT), StrokeKind::Outside);
+            painter.rect_stroke(
+                r.expand(1.0),
+                3.0,
+                Stroke::new(1.5, SELECT),
+                StrokeKind::Outside,
+            );
         }
     }
     hit
@@ -289,7 +341,13 @@ fn draw_gui_object(
             Some(Value::Number(n)) => *n as f32,
             _ => 16.0,
         };
-        painter.text(r.center(), Align2::CENTER_CENTER, text, FontId::proportional(ts), color);
+        painter.text(
+            r.center(),
+            Align2::CENTER_CENTER,
+            text,
+            FontId::proportional(ts),
+            color,
+        );
     }
 }
 
@@ -311,8 +369,18 @@ fn nine_slice_quads(dest: Rect, tw: f32, th: f32, m: (f32, f32, f32, f32)) -> Ve
     let (dt, db) = fit_pair(t, b, dest.height());
     let sx = [0.0, l, (tw - r).max(l), tw];
     let sy = [0.0, t, (th - b).max(t), th];
-    let dx = [dest.left(), dest.left() + dl, dest.right() - dr, dest.right()];
-    let dy = [dest.top(), dest.top() + dt, dest.bottom() - db, dest.bottom()];
+    let dx = [
+        dest.left(),
+        dest.left() + dl,
+        dest.right() - dr,
+        dest.right(),
+    ];
+    let dy = [
+        dest.top(),
+        dest.top() + dt,
+        dest.bottom() - db,
+        dest.bottom(),
+    ];
     let mut out = Vec::new();
     for row in 0..3 {
         for col in 0..3 {
@@ -399,7 +467,10 @@ mod nine_slice_tests {
             .filter(|(d, _)| d.min.x < 1.0)
             .map(|(d, _)| d.width())
             .fold(0.0_f32, f32::max);
-        assert!(widest_left <= 25.0 + 1e-3, "left border not clamped: {widest_left}");
+        assert!(
+            widest_left <= 25.0 + 1e-3,
+            "left border not clamped: {widest_left}"
+        );
         let _ = left_col_max;
     }
 }

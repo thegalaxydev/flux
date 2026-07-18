@@ -220,10 +220,11 @@
         "Clone": { "kind": "method", "params": [], "returns": "Instance", "doc": "Returns a deep copy of this object." },
         "Destroy": { "kind": "method", "params": [], "returns": "()", "doc": "Removes this object from the scene and frees it." },
         "GetTouchingSprites": { "kind": "method", "params": [], "returns": "{Instance}", "doc": "Sprite only: returns sprites overlapping this one in the workspace." },
-        "Play": { "kind": "method", "params": [], "returns": "()", "doc": "SpriteAnimator only: starts spritesheet playback from the first frame." },
-        "Pause": { "kind": "method", "params": [], "returns": "()", "doc": "SpriteAnimator only: freezes playback on the current frame." },
-        "Resume": { "kind": "method", "params": [], "returns": "()", "doc": "SpriteAnimator only: resumes playback from the current TimePosition." },
-        "Stop": { "kind": "method", "params": [], "returns": "()", "doc": "SpriteAnimator only: stops playback and resets to the first frame." }
+        "Play": { "kind": "method", "params": [{ "name": "animation", "type": "string" }, { "name": "restart", "type": "boolean?" }], "returns": "()", "doc": "AnimatedSprite only: play the named animation from the start. No-op if it is already playing, unless `restart` is true." },
+        "Pause": { "kind": "method", "params": [], "returns": "()", "doc": "AnimatedSprite only: freeze playback on the current frame." },
+        "Resume": { "kind": "method", "params": [], "returns": "()", "doc": "AnimatedSprite only: resume playback from the current position." },
+        "Stop": { "kind": "method", "params": [], "returns": "()", "doc": "AnimatedSprite only: stop playback and reset to the first frame." },
+        "IsPlaying": { "kind": "property", "type": "boolean", "doc": "AnimatedSprite only: whether an animation is currently playing." }
       }
     },
     "Vec2": {

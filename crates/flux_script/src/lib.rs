@@ -82,22 +82,9 @@ pub(crate) fn world_handle(lua: &Lua) -> WorldHandle {
         .clone()
 }
 
+/// Shared animation-library cache: parsed `SpriteFrames` held once and reused by
+/// every `AnimatedSprite` that references the same file.
 pub(crate) type AnimCacheHandle = Rc<RefCell<flux_core::animation::AnimationCache>>;
-
-pub(crate) fn anim_cache(lua: &Lua) -> AnimCacheHandle {
-    lua.app_data_ref::<AnimCacheHandle>()
-        .expect("anim cache app data missing")
-        .clone()
-}
-
-/// Project root that animation library asset paths resolve against — the same
-/// root `require` uses for modules.
-pub(crate) fn anim_root(lua: &Lua) -> PathBuf {
-    lua.app_data_ref::<ModuleRoot>()
-        .expect("module root app data missing")
-        .0
-        .clone()
-}
 
 pub struct ScriptHost {
     lua: Lua,
@@ -127,7 +114,6 @@ impl ScriptHost {
         lua.set_app_data(input.clone());
         lua.set_app_data(heartbeat.clone());
         lua.set_app_data(button_signals.clone());
-        lua.set_app_data(cache.clone());
         lua.set_app_data(provider);
         lua.set_app_data(log.clone());
         // Where `require` resolves Module source paths, and its result cache.
@@ -135,12 +121,8 @@ impl ScriptHost {
         lua.set_app_data(ModuleCache::default());
 
         setup_globals(&lua, &world, &scheduler, &log).map_err(|e| e.to_string())?;
-        // Reset players and kick off any AutoPlay clip before scripts run.
-        flux_core::animation::init(
-            &mut world.borrow_mut(),
-            &mut cache.borrow_mut(),
-            script_root,
-        );
+        // Reset AnimatedSprites and kick off any AutoPlay animation before scripts run.
+        flux_core::animation::init(&mut world.borrow_mut());
 
         let host = Self {
             lua,
@@ -204,7 +186,9 @@ impl ScriptHost {
             let point = input.mouse_pos;
             let mut hit: Option<(InstanceId, f64)> = None;
             for id in w.descendants(gui) {
-                let Some(class) = w.class_of(id) else { continue };
+                let Some(class) = w.class_of(id) else {
+                    continue;
+                };
                 if !registry().is_a(class, button_class) {
                     continue;
                 }
@@ -402,8 +386,12 @@ fn require_module(lua: &Lua, target: mlua::Value) -> mlua::Result<mlua::Value> {
         .0
         .clone();
     let full = root.join(&rel);
-    let src = std::fs::read_to_string(&full)
-        .map_err(|e| err(format!("module '{name}': cannot read '{}': {e}", full.display())))?;
+    let src = std::fs::read_to_string(&full).map_err(|e| {
+        err(format!(
+            "module '{name}': cannot read '{}': {e}",
+            full.display()
+        ))
+    })?;
 
     // Modules get the same environment shape as scripts (`script` + engine globals).
     let env = lua.create_table()?;

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use flux_core::{InstanceId, Rect, UDim2, Value, World};
+use flux_core::{InstanceId, UDim2, Value, World};
 use flux_runtime::{InputFrame, LogLevel, Session};
 use glam::Vec2;
 
@@ -80,7 +80,10 @@ fn scripts_run_and_drive_the_world() {
 
     session.step(0.1, &idle());
     let pos = pos_of(&session, hero);
-    assert!((pos.x - 2.0).abs() < 1e-4, "heartbeat did not move hero: {pos}");
+    assert!(
+        (pos.x - 2.0).abs() < 1e-4,
+        "heartbeat did not move hero: {pos}"
+    );
     {
         let rc = session.world();
         let w = rc.borrow();
@@ -131,8 +134,12 @@ fn gui_absolute_position_uses_scale_and_viewport() {
     let frame = w.create("Frame", gui).unwrap();
     w.set_name(frame, "Panel").unwrap();
     let script = w.create("Script", frame).unwrap();
-    w.set_prop(script, "SourcePath", Value::Asset("scripts/test_gui.luau".into()))
-        .unwrap();
+    w.set_prop(
+        script,
+        "SourcePath",
+        Value::Asset("scripts/test_gui.luau".into()),
+    )
+    .unwrap();
     let json = w.to_json();
 
     let mut session = Session::from_scene_json(&json, fixtures()).unwrap();
@@ -173,18 +180,34 @@ fn button_activated_fires_on_click() {
     let gui = w.gui().unwrap();
     let button = w.create("Button", gui).unwrap();
     w.set_name(button, "Btn").unwrap();
-    w.set_prop(button, "Position", Value::UDim2(UDim2::new(0.0, 50.0, 0.0, 40.0)))
-        .unwrap();
-    w.set_prop(button, "Size", Value::UDim2(UDim2::new(0.0, 120.0, 0.0, 30.0)))
-        .unwrap();
+    w.set_prop(
+        button,
+        "Position",
+        Value::UDim2(UDim2::new(0.0, 50.0, 0.0, 40.0)),
+    )
+    .unwrap();
+    w.set_prop(
+        button,
+        "Size",
+        Value::UDim2(UDim2::new(0.0, 120.0, 0.0, 30.0)),
+    )
+    .unwrap();
     let script = w.create("Script", button).unwrap();
-    w.set_prop(script, "SourcePath", Value::Asset("scripts/button.luau".into()))
-        .unwrap();
+    w.set_prop(
+        script,
+        "SourcePath",
+        Value::Asset("scripts/button.luau".into()),
+    )
+    .unwrap();
     let json = w.to_json();
 
     let mut session = Session::from_scene_json(&json, fixtures()).unwrap();
     let rc = session.world();
-    let btn = rc.borrow().gui().and_then(|g| rc.borrow().find_first_child(g, "Btn")).unwrap();
+    let btn = rc
+        .borrow()
+        .gui()
+        .and_then(|g| rc.borrow().find_first_child(g, "Btn"))
+        .unwrap();
 
     let viewport = Vec2::new(800.0, 600.0);
     let press_inside = InputFrame {
@@ -201,7 +224,11 @@ fn button_activated_fires_on_click() {
     session.step(0.016, &release);
     assert_eq!(rc.borrow().name(btn), Some("Btn"));
     session.step(0.016, &press_inside);
-    assert_eq!(rc.borrow().name(btn), Some("Clicked"), "Activated did not fire");
+    assert_eq!(
+        rc.borrow().name(btn),
+        Some("Clicked"),
+        "Activated did not fire"
+    );
 
     session.step(0.016, &release);
     rc.borrow_mut().set_name(btn, "Btn").ok();
@@ -237,7 +264,12 @@ fn launch_inline(root: &Path, src: &str, backend: flux_runtime::DataBackend) -> 
     let s = w.create("Script", w.workspace()).unwrap();
     w.set_prop(s, "SourcePath", Value::Asset("scripts/main.luau".into()))
         .unwrap();
-    Session::launch(&w.to_json(), root, flux_runtime::SessionOptions { data: backend }).unwrap()
+    Session::launch(
+        &w.to_json(),
+        root,
+        flux_runtime::SessionOptions { data: backend },
+    )
+    .unwrap()
 }
 
 #[test]
@@ -245,7 +277,8 @@ fn datastore_service_persists_across_sessions() {
     let dir = temp_root("persist");
     let db = flux_runtime::DataBackend::SqliteFile(dir.join(".flux/data/playtest.sqlite"));
 
-    let writer = "game:GetService(\"DataStoreService\"):GetDataStore(\"scores\"):SetAsync(\"best\", 42)";
+    let writer =
+        "game:GetService(\"DataStoreService\"):GetDataStore(\"scores\"):SetAsync(\"best\", 42)";
     drop(launch_inline(&dir, writer, db.clone()));
 
     let reader = "print(\"best is \" .. game:GetService(\"DataStoreService\"):GetDataStore(\"scores\"):GetAsync(\"best\"))";
@@ -277,14 +310,18 @@ fn datastore_update_and_increment_via_lua() {
     let has = |msg: &str| logs.iter().any(|l| l.message == msg);
     assert!(has("update 5"), "UpdateAsync on missing key: {logs:?}");
     assert!(has("increment 3"), "IncrementAsync: {logs:?}");
-    assert!(has("gone is nil"), "UpdateAsync returning nil should remove: {logs:?}");
+    assert!(
+        has("gone is nil"),
+        "UpdateAsync returning nil should remove: {logs:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn datastore_rejects_unsupported_value() {
     let dir = temp_root("unsupported");
-    let src = "game:GetService(\"DataStoreService\"):GetDataStore(\"s\"):SetAsync(\"k\", function() end)";
+    let src =
+        "game:GetService(\"DataStoreService\"):GetDataStore(\"s\"):SetAsync(\"k\", function() end)";
     let session = launch_inline(&dir, src, flux_runtime::DataBackend::SqliteMemory);
     let logs = session.drain_logs();
     assert!(
@@ -334,19 +371,28 @@ fn get_touching_sprites_detects_overlap() {
     let a = w.create("Sprite", ws).unwrap();
     w.set_name(a, "A").unwrap();
     w.set_prop(a, "Position", Value::Vec2(Vec2::ZERO)).unwrap();
-    w.set_prop(a, "Size", Value::Vec2(Vec2::new(50.0, 50.0))).unwrap();
+    w.set_prop(a, "Size", Value::Vec2(Vec2::new(50.0, 50.0)))
+        .unwrap();
     let b = w.create("Sprite", ws).unwrap();
     w.set_name(b, "B").unwrap();
-    w.set_prop(b, "Position", Value::Vec2(Vec2::new(30.0, 0.0))).unwrap();
-    w.set_prop(b, "Size", Value::Vec2(Vec2::new(50.0, 50.0))).unwrap();
+    w.set_prop(b, "Position", Value::Vec2(Vec2::new(30.0, 0.0)))
+        .unwrap();
+    w.set_prop(b, "Size", Value::Vec2(Vec2::new(50.0, 50.0)))
+        .unwrap();
     let far = w.create("Sprite", ws).unwrap();
     w.set_name(far, "Far").unwrap();
-    w.set_prop(far, "Position", Value::Vec2(Vec2::new(500.0, 0.0))).unwrap();
-    w.set_prop(far, "Size", Value::Vec2(Vec2::new(50.0, 50.0))).unwrap();
+    w.set_prop(far, "Position", Value::Vec2(Vec2::new(500.0, 0.0)))
+        .unwrap();
+    w.set_prop(far, "Size", Value::Vec2(Vec2::new(50.0, 50.0)))
+        .unwrap();
 
     let script = w.create("Script", a).unwrap();
-    w.set_prop(script, "SourcePath", Value::Asset("scripts/touching.luau".into()))
-        .unwrap();
+    w.set_prop(
+        script,
+        "SourcePath",
+        Value::Asset("scripts/touching.luau".into()),
+    )
+    .unwrap();
     let json = w.to_json();
 
     let session = Session::from_scene_json(&json, fixtures()).unwrap();
@@ -372,8 +418,12 @@ fn scripts_in_the_scripts_container_run() {
     let mut w = World::new();
     let scripts = w.scripts().expect("Scripts service");
     let s = w.create("Script", scripts).unwrap();
-    w.set_prop(s, "SourcePath", Value::Asset("scripts/top_level.luau".to_string()))
-        .unwrap();
+    w.set_prop(
+        s,
+        "SourcePath",
+        Value::Asset("scripts/top_level.luau".to_string()),
+    )
+    .unwrap();
     let json = w.to_json();
 
     let session = Session::from_scene_json(&json, fixtures()).unwrap();
@@ -395,7 +445,8 @@ fn scene_with(items: &[(&str, &str, &str)]) -> String {
     for (class, name, path) in items {
         let id = w.create(class, scripts).unwrap();
         w.set_name(id, *name).unwrap();
-        w.set_prop(id, "SourcePath", Value::Asset(path.to_string())).unwrap();
+        w.set_prop(id, "SourcePath", Value::Asset(path.to_string()))
+            .unwrap();
     }
     w.to_json()
 }
@@ -410,11 +461,24 @@ fn require_loads_a_module_once_and_caches_it() {
     let logs = session.drain_logs();
     let msgs: Vec<&str> = logs.iter().map(|l| l.message.as_str()).collect();
 
-    assert!(logs.iter().all(|l| l.level != LogLevel::Error), "unexpected error: {logs:?}");
+    assert!(
+        logs.iter().all(|l| l.level != LogLevel::Error),
+        "unexpected error: {logs:?}"
+    );
     // Module body ran exactly once despite two requires.
-    assert_eq!(msgs.iter().filter(|m| **m == "module loaded").count(), 1, "{msgs:?}");
-    assert!(msgs.contains(&"speed 240"), "module data not returned: {msgs:?}");
-    assert!(msgs.contains(&"same true"), "require should return the cached value: {msgs:?}");
+    assert_eq!(
+        msgs.iter().filter(|m| **m == "module loaded").count(),
+        1,
+        "{msgs:?}"
+    );
+    assert!(
+        msgs.contains(&"speed 240"),
+        "module data not returned: {msgs:?}"
+    );
+    assert!(
+        msgs.contains(&"same true"),
+        "require should return the cached value: {msgs:?}"
+    );
 }
 
 #[test]
@@ -439,15 +503,16 @@ fn cyclic_require_is_reported() {
     let session = Session::from_scene_json(&json, fixtures()).unwrap();
     let logs = session.drain_logs();
     assert!(
-        logs.iter().any(|l| l.level == LogLevel::Error && l.message.contains("cyclic")),
+        logs.iter()
+            .any(|l| l.level == LogLevel::Error && l.message.contains("cyclic")),
         "expected a cyclic-require error: {logs:?}"
     );
 }
 
-/// End-to-end: an AnimationPlayer with AutoPlay set drives its parent Sprite's
-/// SourceRect (and Texture) through a real `.frames.json` loaded from disk.
+/// End-to-end: an `AnimatedSprite` with AutoPlay set advances its own
+/// `CurrentFrame` through a real `.spriteframes` library loaded from disk.
 #[test]
-fn animation_player_autoplays_and_advances_source_rect() {
+fn animated_sprite_autoplays_and_advances_frames() {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -455,7 +520,7 @@ fn animation_player_autoplays_and_advances_source_rect() {
     let dir = std::env::temp_dir().join(format!("flux_anim_test_{nanos}"));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        dir.join("hero.frames.json"),
+        dir.join("hero.spriteframes"),
         r#"{
             "texture": "hero.png",
             "clips": { "Run": { "loop": true, "frames": [
@@ -469,44 +534,44 @@ fn animation_player_autoplays_and_advances_source_rect() {
 
     let mut w = World::new();
     let ws = w.workspace();
-    let sprite = w.create("Sprite", ws).unwrap();
-    w.set_name(sprite, "Hero").unwrap();
-    let player = w.create("AnimationPlayer", sprite).unwrap();
-    w.set_prop(player, "Frames", Value::Asset("hero.frames.json".into())).unwrap();
-    w.set_prop(player, "AutoPlay", Value::String("Run".into())).unwrap();
+    let s = w.create("AnimatedSprite", ws).unwrap();
+    w.set_name(s, "Hero").unwrap();
+    w.set_prop(s, "Frames", Value::Asset("hero.spriteframes".into()))
+        .unwrap();
+    w.set_prop(s, "Animation", Value::String("Run".into()))
+        .unwrap();
+    w.set_prop(s, "AutoPlay", Value::Bool(true)).unwrap();
     let json = w.to_json();
 
     let mut session = Session::from_scene_json(&json, &dir).unwrap();
 
-    let rect_of = |s: &Session| {
-        let rc = s.world();
+    let hero = |sess: &Session| {
+        let rc = sess.world();
         let w = rc.borrow();
-        let hero = w.find_first_child(w.workspace(), "Hero").unwrap();
-        match w.get_prop(hero, "SourceRect") {
-            Some(Value::Rect(r)) => *r,
-            other => panic!("unexpected SourceRect {other:?}"),
+        w.find_first_child(w.workspace(), "Hero").unwrap()
+    };
+    let frame = |sess: &Session| -> i64 {
+        let rc = sess.world();
+        let w = rc.borrow();
+        match w.get_prop(hero(sess), "CurrentFrame") {
+            Some(Value::Number(n)) => *n as i64,
+            other => panic!("unexpected CurrentFrame {other:?}"),
         }
     };
-    let texture_of = |s: &Session| {
-        let rc = s.world();
+    let playing = |sess: &Session| -> bool {
+        let rc = sess.world();
         let w = rc.borrow();
-        let hero = w.find_first_child(w.workspace(), "Hero").unwrap();
-        match w.get_prop(hero, "Texture") {
-            Some(Value::Asset(t)) => t.clone(),
-            other => panic!("unexpected Texture {other:?}"),
-        }
+        matches!(w.get_prop(hero(sess), "Playing"), Some(Value::Bool(true)))
     };
 
-    // AutoPlay applied frame 0 and the library's default texture at launch.
-    assert_eq!(rect_of(&session), Rect::new(0.0, 0.0, 16.0, 16.0));
-    assert_eq!(texture_of(&session), "hero.png");
-
-    session.step(0.1, &idle()); // -> frame 1
-    assert_eq!(rect_of(&session), Rect::new(16.0, 0.0, 16.0, 16.0));
-    session.step(0.1, &idle()); // -> frame 2
-    assert_eq!(rect_of(&session), Rect::new(32.0, 0.0, 16.0, 16.0));
-    session.step(0.1, &idle()); // loops back to frame 0
-    assert_eq!(rect_of(&session), Rect::new(0.0, 0.0, 16.0, 16.0));
+    assert!(playing(&session), "AutoPlay should start playback");
+    assert_eq!(frame(&session), 0);
+    session.step(0.1, &idle());
+    assert_eq!(frame(&session), 1);
+    session.step(0.1, &idle());
+    assert_eq!(frame(&session), 2);
+    session.step(0.1, &idle()); // loops back
+    assert_eq!(frame(&session), 0);
 
     std::fs::remove_dir_all(&dir).ok();
 }

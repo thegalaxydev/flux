@@ -94,6 +94,8 @@ pub struct EditorApp {
     textures: TextureCache,
     editor: ScriptEditor,
     anim: crate::animation_editor::AnimationEditor,
+    /// Shared clip-library cache for drawing AnimatedSprites in edit mode.
+    anim_cache: flux_core::animation::AnimationCache,
     play: Option<Session>,
     logs: Vec<LogEntry>,
     path: Option<PathBuf>,
@@ -128,6 +130,7 @@ impl EditorApp {
             textures: TextureCache::default(),
             editor: ScriptEditor::default(),
             anim: crate::animation_editor::AnimationEditor::default(),
+            anim_cache: Default::default(),
             play: None,
             logs: Vec::new(),
             path,
@@ -382,6 +385,7 @@ impl EditorApp {
         self.ui = UiState::default();
         self.logs.clear();
         self.textures.clear();
+        self.anim_cache.clear();
         self.editor.clear();
         self.anim = crate::animation_editor::AnimationEditor::default();
     }
@@ -435,7 +439,11 @@ impl EditorApp {
 
         // Prefer the project's `scripts/` folder as the starting directory.
         let scripts = root.join("scripts");
-        let start = if scripts.is_dir() { scripts } else { root.clone() };
+        let start = if scripts.is_dir() {
+            scripts
+        } else {
+            root.clone()
+        };
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Luau source", &["luau", "lua"])
             .set_directory(&start)
@@ -588,20 +596,14 @@ impl EditorApp {
                 ui.menu_button("Edit", |ui| {
                     ui.add_enabled_ui(!playing, |ui| {
                         if ui
-                            .add_enabled(
-                                self.history.can_undo(),
-                                egui::Button::new("Undo\tCtrl+Z"),
-                            )
+                            .add_enabled(self.history.can_undo(), egui::Button::new("Undo\tCtrl+Z"))
                             .clicked()
                         {
                             self.undo_one();
                             ui.close();
                         }
                         if ui
-                            .add_enabled(
-                                self.history.can_redo(),
-                                egui::Button::new("Redo\tCtrl+Y"),
-                            )
+                            .add_enabled(self.history.can_redo(), egui::Button::new("Redo\tCtrl+Y"))
                             .clicked()
                         {
                             self.redo_one();
@@ -647,14 +649,11 @@ impl EditorApp {
                 });
                 ui.menu_button("Playtest", |ui| {
                     ui.add_enabled_ui(!playing, |ui| {
-                        ui.checkbox(
-                            &mut self.persist_playtest_data,
-                            "Persist playtest data",
-                        )
-                        .on_hover_text(
-                            "On: DataStore writes to <project>/.flux/data/playtest.sqlite.\n\
+                        ui.checkbox(&mut self.persist_playtest_data, "Persist playtest data")
+                            .on_hover_text(
+                                "On: DataStore writes to <project>/.flux/data/playtest.sqlite.\n\
                              Off: a temporary in-memory database, discarded on Stop.",
-                        );
+                            );
                         if ui.button("Clear Playtest Data").clicked() {
                             self.clear_playtest_data();
                             ui.close();
@@ -817,7 +816,11 @@ impl EditorApp {
                         .icons
                         .icon(Icon::Light)
                         .size(18.0)
-                        .role(if dark { IconRole::Muted } else { IconRole::Accent })
+                        .role(if dark {
+                            IconRole::Muted
+                        } else {
+                            IconRole::Accent
+                        })
                         .button(ui)
                         .on_hover_text("Toggle light/dark theme");
                     if toggle.clicked() {
@@ -878,12 +881,14 @@ impl EditorApp {
                                     .flatten();
                                 if let Some((path, line, col)) = location {
                                     if ui
-                                        .add(egui::Label::new(
-                                            egui::RichText::new(&entry.message)
-                                                .color(color)
-                                                .underline(),
+                                        .add(
+                                            egui::Label::new(
+                                                egui::RichText::new(&entry.message)
+                                                    .color(color)
+                                                    .underline(),
+                                            )
+                                            .sense(egui::Sense::click()),
                                         )
-                                        .sense(egui::Sense::click()))
                                         .on_hover_text("Open in Script Editor")
                                         .clicked()
                                     {
@@ -1041,7 +1046,9 @@ impl EditorApp {
 
     fn step_play(&mut self, ctx: &egui::Context) {
         let vp = self.ui.viewport_rect;
-        let Some(session) = &mut self.play else { return };
+        let Some(session) = &mut self.play else {
+            return;
+        };
         let dt = (ctx.input(|i| i.stable_dt) as f64).min(0.1);
         let keys: HashSet<String> = if ctx.wants_keyboard_input() {
             HashSet::new()
@@ -1080,7 +1087,13 @@ impl EditorApp {
 fn source_file_name(instance_name: &str, is_module: bool) -> String {
     let stem: String = instance_name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let stem = if stem.trim_matches(['_', '-']).is_empty() {
         if is_module { "Module" } else { "Script" }.to_string()
@@ -1131,6 +1144,7 @@ impl eframe::App for EditorApp {
                 ui,
                 icons,
                 textures,
+                anim_cache,
                 editor,
                 ..
             } = &mut *self;
@@ -1171,7 +1185,15 @@ impl eframe::App for EditorApp {
                 panel.separator();
                 match editor.active {
                     ActiveTab::Scene => {
-                        crate::viewport::show(panel, active, ui, playing, root.as_deref(), textures);
+                        crate::viewport::show(
+                            panel,
+                            active,
+                            ui,
+                            playing,
+                            root.as_deref(),
+                            textures,
+                            anim_cache,
+                        );
                     }
                     ActiveTab::Script(i) => {
                         if let Some(tab) = editor.tabs.get_mut(i) {

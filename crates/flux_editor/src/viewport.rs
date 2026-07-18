@@ -123,7 +123,10 @@ fn to_glam(p: egui::Pos2) -> glam::Vec2 {
 }
 
 fn screen_rect(rect: egui::Rect) -> Rect2 {
-    Rect2::new(glam::vec2(rect.min.x, rect.min.y), glam::vec2(rect.width(), rect.height()))
+    Rect2::new(
+        glam::vec2(rect.min.x, rect.min.y),
+        glam::vec2(rect.width(), rect.height()),
+    )
 }
 
 fn udim2_prop(world: &World, id: InstanceId, name: &str) -> UDim2 {
@@ -133,6 +136,7 @@ fn udim2_prop(world: &World, id: InstanceId, name: &str) -> UDim2 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut Ui,
     world: &World,
@@ -140,6 +144,7 @@ pub fn show(
     playing: bool,
     root: Option<&Path>,
     textures: &mut TextureCache,
+    anim: &mut flux_core::animation::AnimationCache,
 ) {
     let (response, painter) =
         ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
@@ -172,9 +177,8 @@ pub fn show(
     };
 
     // World <-> screen mapping, matching flux_view's draw_scene.
-    let to_screen = |w: glam::Vec2| -> Pos2 {
-        origin + (egui::vec2(w.x, w.y) - camera.offset) * camera.zoom
-    };
+    let to_screen =
+        |w: glam::Vec2| -> Pos2 { origin + (egui::vec2(w.x, w.y) - camera.offset) * camera.zoom };
     let to_world = |s: Pos2| -> glam::Vec2 {
         let v = (s - origin) / camera.zoom + camera.offset;
         glam::vec2(v.x, v.y)
@@ -187,11 +191,17 @@ pub fn show(
         let axis = origin + (egui::Vec2::ZERO - camera.offset) * camera.zoom;
         let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(45));
         painter.line_segment(
-            [egui::pos2(rect.left(), axis.y), egui::pos2(rect.right(), axis.y)],
+            [
+                egui::pos2(rect.left(), axis.y),
+                egui::pos2(rect.right(), axis.y),
+            ],
             stroke,
         );
         painter.line_segment(
-            [egui::pos2(axis.x, rect.top()), egui::pos2(axis.x, rect.bottom())],
+            [
+                egui::pos2(axis.x, rect.top()),
+                egui::pos2(axis.x, rect.bottom()),
+            ],
             stroke,
         );
     }
@@ -201,6 +211,7 @@ pub fn show(
         ui.ctx(),
         world,
         textures,
+        anim,
         rect,
         camera,
         root,
@@ -248,16 +259,27 @@ pub fn show(
                 if let Some((id, xf)) = sel_sprite.filter(|&(id, _)| !is_locked(world, id)) {
                     let corners = xf.corners().map(to_screen);
                     if state.tool == Tool::Rotate && near_rotate_handle(&corners, p) {
-                        state.sprite_op = Some(begin_sprite_op(id, xf, SpriteKind::Rotate, p, to_world));
+                        state.sprite_op =
+                            Some(begin_sprite_op(id, xf, SpriteKind::Rotate, p, to_world));
                     } else if state.tool == Tool::Resize {
                         if let Some(dir) = sprite_handle_at(&corners, p) {
-                            state.sprite_op =
-                                Some(begin_sprite_op(id, xf, SpriteKind::Resize(dir), p, to_world));
+                            state.sprite_op = Some(begin_sprite_op(
+                                id,
+                                xf,
+                                SpriteKind::Resize(dir),
+                                p,
+                                to_world,
+                            ));
                         }
                     } else if state.tool == Tool::Move {
                         if let Some(axis) = move_arrow_at(corners_center(&corners), p) {
-                            state.sprite_op =
-                                Some(begin_sprite_op(id, xf, SpriteKind::MoveAxis(axis), p, to_world));
+                            state.sprite_op = Some(begin_sprite_op(
+                                id,
+                                xf,
+                                SpriteKind::MoveAxis(axis),
+                                p,
+                                to_world,
+                            ));
                         }
                     }
                 }
@@ -512,7 +534,11 @@ fn draw_move_arrows(painter: &egui::Painter, center: Pos2) {
         let perp = egui::vec2(-dir.y, dir.x);
         let base = tip - dir * ARROW_HEAD;
         painter.add(egui::Shape::convex_polygon(
-            vec![tip, base + perp * ARROW_HEAD * 0.6, base - perp * ARROW_HEAD * 0.6],
+            vec![
+                tip,
+                base + perp * ARROW_HEAD * 0.6,
+                base - perp * ARROW_HEAD * 0.6,
+            ],
             ACCENT,
             Stroke::NONE,
         ));
@@ -557,15 +583,24 @@ fn near_rotate_handle(corners: &[Pos2; 4], p: Pos2) -> bool {
 }
 
 fn outline(painter: &egui::Painter, c: &[Pos2; 4], color: Color32, width: f32) {
-    painter.add(egui::Shape::closed_line(c.to_vec(), Stroke::new(width, color)));
+    painter.add(egui::Shape::closed_line(
+        c.to_vec(),
+        Stroke::new(width, color),
+    ));
 }
 
 fn handle_dot(painter: &egui::Painter, c: Pos2) {
-    painter.rect_filled(Rect::from_center_size(c, egui::vec2(HANDLE, HANDLE)), 1.0, ACCENT);
+    painter.rect_filled(
+        Rect::from_center_size(c, egui::vec2(HANDLE, HANDLE)),
+        1.0,
+        ACCENT,
+    );
 }
 
 fn set_transform_cursor(ui: &Ui, response: &egui::Response, tool: Tool, corners: &[Pos2; 4]) {
-    let Some(p) = response.hover_pos() else { return };
+    let Some(p) = response.hover_pos() else {
+        return;
+    };
     let icon = match tool {
         Tool::Rotate if near_rotate_handle(corners, p) => Some(CursorIcon::Crosshair),
         Tool::Resize => sprite_handle_at(corners, p).map(|dir| {
@@ -605,13 +640,19 @@ fn draw_grid(painter: &egui::Painter, rect: Rect, grid: f32, camera: Camera, ori
     let mut x = (left / grid).floor() * grid;
     while x <= right {
         let sx = origin.x + (x - camera.offset.x) * camera.zoom;
-        painter.line_segment([egui::pos2(sx, rect.top()), egui::pos2(sx, rect.bottom())], stroke);
+        painter.line_segment(
+            [egui::pos2(sx, rect.top()), egui::pos2(sx, rect.bottom())],
+            stroke,
+        );
         x += grid;
     }
     let mut y = (top / grid).floor() * grid;
     while y <= bottom {
         let sy = origin.y + (y - camera.offset.y) * camera.zoom;
-        painter.line_segment([egui::pos2(rect.left(), sy), egui::pos2(rect.right(), sy)], stroke);
+        painter.line_segment(
+            [egui::pos2(rect.left(), sy), egui::pos2(rect.right(), sy)],
+            stroke,
+        );
         y += grid;
     }
 }
@@ -825,19 +866,26 @@ fn draw_guides(painter: &egui::Painter, rect: egui::Rect, guides: &Guides) {
     let stroke = Stroke::new(1.0, GUIDE);
     for &x in &guides.vertical {
         if x >= rect.left() - 1.0 && x <= rect.right() + 1.0 {
-            painter.line_segment([Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())], stroke);
+            painter.line_segment(
+                [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+                stroke,
+            );
         }
     }
     for &y in &guides.horizontal {
         if y >= rect.top() - 1.0 && y <= rect.bottom() + 1.0 {
-            painter.line_segment([Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)], stroke);
+            painter.line_segment(
+                [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
+                stroke,
+            );
         }
     }
 }
 
 fn handle_at(r: egui::Rect, p: egui::Pos2) -> Option<Handle> {
     Handle::ALL.into_iter().find(|h| {
-        egui::Rect::from_center_size(h.center(r), egui::vec2(HANDLE + 4.0, HANDLE + 4.0)).contains(p)
+        egui::Rect::from_center_size(h.center(r), egui::vec2(HANDLE + 4.0, HANDLE + 4.0))
+            .contains(p)
     })
 }
 

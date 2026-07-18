@@ -89,6 +89,8 @@ impl World {
                 .ok_or_else(|| CoreError::Load(format!("dangling instance ref {serial}")))?;
             world.set_prop(id, prop, Value::InstanceRef(Some(target)))?;
         }
+        // Convert legacy Sprite + AnimationPlayer pairs to AnimatedSprite.
+        migrate_legacy_animation(&mut world);
         // Older scenes may predate a service (e.g. `Scripts`); add any missing.
         world.ensure_services();
         Ok(world)
@@ -103,6 +105,10 @@ fn save_instance(
     let info = registry().info(world.class_of(id).unwrap());
     let mut props = IndexMap::new();
     for pd in &info.props {
+        // Transient runtime state (playback position, etc.) is never serialized.
+        if pd.transient {
+            continue;
+        }
         let value = world.get_prop(id, pd.name).unwrap();
         if *value != pd.default {
             props.insert(pd.name.to_string(), save_value(value, ref_ids));
@@ -127,9 +133,7 @@ fn save_value(value: &Value, ref_ids: &HashMap<InstanceId, u64>) -> SavedValue {
         Value::Number(n) => SavedValue::Number(*n),
         Value::String(s) => SavedValue::String(s.clone()),
         Value::Vec2(v) => SavedValue::Vec2([v.x, v.y]),
-        Value::UDim2(u) => {
-            SavedValue::UDim2([u.x.scale, u.x.offset, u.y.scale, u.y.offset])
-        }
+        Value::UDim2(u) => SavedValue::UDim2([u.x.scale, u.x.offset, u.y.scale, u.y.offset]),
         Value::Color(c) => SavedValue::Color([c.r, c.g, c.b, c.a]),
         Value::Rect(r) => SavedValue::Rect([r.x, r.y, r.w, r.h]),
         Value::Asset(s) => SavedValue::Asset(s.clone()),
@@ -161,12 +165,99 @@ fn load_instance(
     }
     for child in &saved.children {
         let cclass = registry()
-            .find(&child.class)
+            .find(resolve_legacy_class(&child.class))
             .ok_or_else(|| CoreError::UnknownClass(child.class.clone()))?;
         let cid = world.spawn_raw(cclass, id);
         load_instance(world, child, cid, refs, fixups)?;
     }
     Ok(())
+}
+
+/// Map removed class names to their compatibility stand-ins so older scenes
+/// still load (they are then converted by [`migrate_legacy_animation`]).
+fn resolve_legacy_class(name: &str) -> &str {
+    match name {
+        "AnimationPlayer" | "SpriteAnimator" => "LegacyAnimationPlayer",
+        other => other,
+    }
+}
+
+/// Convert legacy `Sprite` + animation-player pairs into self-contained
+/// `AnimatedSprite` nodes. A player not parented to a Sprite can't be migrated
+/// meaningfully and is dropped.
+fn migrate_legacy_animation(world: &mut World) {
+    let root = world.root();
+    let legacy: Vec<InstanceId> = world
+        .descendants(root)
+        .into_iter()
+        .filter(|&id| world.class_name(id) == Some("LegacyAnimationPlayer"))
+        .collect();
+
+    for player in legacy {
+        let Some(sprite) = world.parent(player) else {
+            let _ = world.destroy(player);
+            continue;
+        };
+        if world.class_name(sprite) != Some("Sprite") {
+            let _ = world.destroy(player);
+            continue;
+        }
+        let Some(parent) = world.parent(sprite) else {
+            let _ = world.destroy(player);
+            continue;
+        };
+        let index = world.child_index(sprite).unwrap_or(0);
+
+        let anim = world.spawn("AnimatedSprite", parent);
+        let _ = world.reparent_at(anim, parent, index);
+        if let Some(name) = world.name(sprite).map(str::to_string) {
+            world.set_name_raw(anim, name);
+        }
+        // Transfer transform + visual configuration from the Sprite.
+        for p in [
+            "Position", "Rotation", "Scale", "ZIndex", "Visible", "Locked", "Size", "Pivot",
+            "Tint", "FlipX", "FlipY", "Material",
+        ] {
+            if let Some(v) = world.get_prop(sprite, p).cloned() {
+                let _ = world.set_prop(anim, p, v);
+            }
+        }
+        // Transfer animation configuration from the player.
+        if let Some(v) = world.get_prop(player, "Frames").cloned() {
+            let _ = world.set_prop(anim, "Frames", v);
+        }
+        if let Some(Value::Number(s)) = world.get_prop(player, "Speed").cloned() {
+            let _ = world.set_prop(anim, "SpeedScale", Value::Number(s));
+        }
+        // The legacy AutoPlay was a clip-name string; a non-empty value maps to
+        // AutoPlay=true plus that animation.
+        let mut animation = String::new();
+        if let Some(Value::String(clip)) = world.get_prop(player, "AutoPlay").cloned() {
+            if !clip.is_empty() {
+                let _ = world.set_prop(anim, "AutoPlay", Value::Bool(true));
+                animation = clip;
+            }
+        }
+        if animation.is_empty() {
+            if let Some(Value::String(clip)) = world.get_prop(player, "CurrentClip").cloned() {
+                animation = clip;
+            }
+        }
+        if !animation.is_empty() {
+            let _ = world.set_prop(anim, "Animation", Value::String(animation));
+        }
+        // Re-home the Sprite's other children under the new node.
+        let kids: Vec<InstanceId> = world
+            .children(sprite)
+            .iter()
+            .copied()
+            .filter(|&c| c != player)
+            .collect();
+        for (i, kid) in kids.into_iter().enumerate() {
+            let _ = world.reparent_at(kid, anim, i);
+        }
+        let _ = world.destroy(sprite);
+    }
 }
 
 fn load_value(sv: &SavedValue) -> Value {

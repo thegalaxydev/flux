@@ -13,6 +13,9 @@ pub struct PropDef {
     pub name: &'static str,
     pub ty: ValueType,
     pub default: Value,
+    /// Transient runtime state (e.g. playback position): held on the instance so
+    /// scripts and the inspector can read it, but never written to scene files.
+    pub transient: bool,
 }
 
 fn prop(name: &'static str, default: Value) -> PropDef {
@@ -20,6 +23,15 @@ fn prop(name: &'static str, default: Value) -> PropDef {
         name,
         ty: default.ty(),
         default,
+        transient: false,
+    }
+}
+
+/// A transient property — see [`PropDef::transient`].
+fn prop_t(name: &'static str, default: Value) -> PropDef {
+    PropDef {
+        transient: true,
+        ..prop(name, default)
     }
 }
 
@@ -118,8 +130,8 @@ impl ClassRegistry {
         );
         // The 2D render node. It only draws: a texture region (`SourceRect`,
         // whole-texture when zero-sized) stretched to `Size`, tinted and
-        // flipped. It knows nothing about animation — an `AnimationPlayer`
-        // drives its `Texture`/`SourceRect` each frame.
+        // flipped. It knows nothing about animation — for sprite-frame playback
+        // use `AnimatedSprite`.
         reg.add(
             "Sprite",
             Some("Node2D"),
@@ -138,24 +150,50 @@ impl ClassRegistry {
                 prop("Material", Value::Asset(String::new())),
             ],
         );
-        // Plays spritesheet clips from a `.frames.json` library, driving its
-        // parent Sprite. Controlled from Lua via :Play(name)/:Pause()/:Resume()/
-        // :Stop(). Runtime state (CurrentClip/TimePosition/CurrentFrame/Playing)
-        // is exposed as properties so it is inspectable and serializable.
+        // Self-contained sprite-frame animation node. It owns playback AND
+        // rendering: it resolves the current frame of the selected `Animation`
+        // from its `Frames` library (the single source of truth for the
+        // texture) and draws it directly — it never mutates another node.
+        // Authored config serializes; runtime state (Playing/CurrentFrame/
+        // TimePosition) is transient and read-only.
         reg.add(
-            "AnimationPlayer",
-            Some("Instance"),
+            "AnimatedSprite",
+            Some("Node2D"),
             true,
             false,
             vec![
                 prop("Frames", Value::Asset(String::new())),
-                // Clip name to start automatically on play; empty = none.
+                prop("Animation", Value::String(String::new())),
+                prop("AutoPlay", Value::Bool(false)),
+                prop("SpeedScale", Value::Number(1.0)),
+                prop("Size", Value::Vec2(Vec2::new(100.0, 100.0))),
+                prop("Pivot", Value::Vec2(Vec2::new(0.5, 0.5))),
+                prop("Tint", Value::Color(Color::WHITE)),
+                prop("FlipX", Value::Bool(false)),
+                prop("FlipY", Value::Bool(false)),
+                prop("Material", Value::Asset(String::new())),
+                // Transient runtime state — never serialized.
+                prop_t("Playing", Value::Bool(false)),
+                prop_t("CurrentFrame", Value::Number(0.0)),
+                prop_t("TimePosition", Value::Number(0.0)),
+            ],
+        );
+        // Legacy sprite-only animation node, kept only so older scenes load and
+        // migrate to `AnimatedSprite`. Not creatable; the `AnimationPlayer` name
+        // is reserved for a future general-purpose property animator.
+        reg.add(
+            "LegacyAnimationPlayer",
+            Some("Instance"),
+            false,
+            false,
+            vec![
+                prop("Frames", Value::Asset(String::new())),
                 prop("AutoPlay", Value::String(String::new())),
                 prop("Speed", Value::Number(1.0)),
                 prop("CurrentClip", Value::String(String::new())),
-                prop("TimePosition", Value::Number(0.0)),
-                prop("CurrentFrame", Value::Number(0.0)),
-                prop("Playing", Value::Bool(false)),
+                prop_t("TimePosition", Value::Number(0.0)),
+                prop_t("CurrentFrame", Value::Number(0.0)),
+                prop_t("Playing", Value::Bool(false)),
             ],
         );
         reg.add(
@@ -196,7 +234,10 @@ impl ClassRegistry {
                 prop("Position", Value::UDim2(UDim2::new(0.0, 20.0, 0.0, 20.0))),
                 prop("Size", Value::UDim2(UDim2::new(0.0, 160.0, 0.0, 32.0))),
                 prop("AnchorPoint", Value::Vec2(Vec2::ZERO)),
-                prop("BackgroundColor", Value::Color(Color::new(0.14, 0.15, 0.19, 1.0))),
+                prop(
+                    "BackgroundColor",
+                    Value::Color(Color::new(0.14, 0.15, 0.19, 1.0)),
+                ),
                 prop("BackgroundTransparency", Value::Number(0.0)),
                 prop("Visible", Value::Bool(true)),
                 prop("ClipsDescendants", Value::Bool(false)),

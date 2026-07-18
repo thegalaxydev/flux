@@ -92,7 +92,18 @@ fn node(
     let has_children = !children.is_empty();
     let open = has_children && !state.explorer.collapsed.contains(&id);
 
-    draw_row(ui, world, state, icons, id, &name, depth, has_children, open, rows);
+    draw_row(
+        ui,
+        world,
+        state,
+        icons,
+        id,
+        &name,
+        depth,
+        has_children,
+        open,
+        rows,
+    );
 
     if open {
         for child in children {
@@ -161,7 +172,8 @@ fn draw_row(
         return;
     }
 
-    let (rect, response) = ui.allocate_exact_size(vec2(full_w, ROW_HEIGHT), Sense::click_and_drag());
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(full_w, ROW_HEIGHT), Sense::click_and_drag());
 
     if selected {
         ui.painter()
@@ -175,7 +187,10 @@ fn draw_row(
     }
 
     let caret_rect = has_children.then(|| {
-        Rect::from_min_size(pos2(rect.left() + indent, rect.top()), vec2(CARET_W, ROW_HEIGHT))
+        Rect::from_min_size(
+            pos2(rect.left() + indent, rect.top()),
+            vec2(CARET_W, ROW_HEIGHT),
+        )
     });
     if let Some(cr) = caret_rect {
         draw_caret(ui.painter(), cr, open, ui.visuals().weak_text_color());
@@ -190,7 +205,11 @@ fn draw_row(
     } else {
         IconRole::Muted
     };
-    icons.icon(icon_for(world, id, open)).size(ICON).role(role).paint_at(ui, icon_rect);
+    icons
+        .icon(icon_for(world, id, open))
+        .size(ICON)
+        .role(role)
+        .paint_at(ui, icon_rect);
 
     let text_color = if selected {
         ui.visuals().strong_text_color()
@@ -430,9 +449,11 @@ fn draw_drop_indicator(ui: &Ui, drop: &Drop, rows: &[Row]) {
 
 fn draw_drag_ghost(ui: &Ui, world: &World, src: InstanceId, p: Pos2) {
     let Some(name) = world.name(src) else { return };
-    let painter =
-        ui.ctx().layer_painter(LayerId::new(Order::Tooltip, Id::new("flux_explorer_ghost")));
-    let galley = painter.layout_no_wrap(name.to_string(), FontId::proportional(13.0), Color32::WHITE);
+    let painter = ui
+        .ctx()
+        .layer_painter(LayerId::new(Order::Tooltip, Id::new("flux_explorer_ghost")));
+    let galley =
+        painter.layout_no_wrap(name.to_string(), FontId::proportional(13.0), Color32::WHITE);
     let at = p + vec2(14.0, 6.0);
     let bg = Rect::from_min_size(at, galley.size()).expand(4.0);
     painter.rect_filled(bg, 3.0, Color32::from_black_alpha(190));
@@ -620,7 +641,7 @@ fn icon_for(world: &World, id: InstanceId, open: bool) -> Icon {
         "Camera2D" => Icon::Camera,
         "Node2D" => Icon::Component,
         "Sprite" => Icon::Sprite,
-        "AnimationPlayer" => Icon::Animation,
+        "AnimatedSprite" => Icon::Animation,
         "Script" => Icon::Script,
         "Module" => Icon::LuaScript,
         "Gui" => Icon::Ui,
