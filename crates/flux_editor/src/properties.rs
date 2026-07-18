@@ -1,4 +1,4 @@
-use flux_core::{Color, InstanceId, UDim2, Value, World};
+use flux_core::{Color, InstanceId, Rect, UDim2, Value, World};
 use eframe::egui::{self, Ui};
 
 use crate::app::{Pending, UiState};
@@ -30,6 +30,20 @@ pub fn show(ui: &mut Ui, world: &World, state: &mut UiState) {
                     ui.end_row();
                 }
             });
+
+        // AnimationPlayer: a shortcut into the animation editor for its library.
+        if world.class_name(id) == Some("AnimationPlayer") {
+            if let Some(Value::Asset(frames)) = world.get_prop(id, "Frames") {
+                let frames = frames.clone();
+                ui.separator();
+                if ui
+                    .add_enabled(!frames.is_empty(), egui::Button::new("Edit Animation Library…"))
+                    .clicked()
+                {
+                    state.open_animation = Some(frames);
+                }
+            }
+        }
     });
 }
 
@@ -94,6 +108,32 @@ fn value_widget(ui: &mut Ui, world: &World, prop: &str, value: &Value) -> Option
             resp.changed().then(|| {
                 let merge = ui.input(|i| i.pointer.any_down());
                 (Value::Color(Color::new(arr[0], arr[1], arr[2], arr[3])), merge)
+            })
+        }
+        Value::Rect(r) => {
+            let (mut x, mut y, mut w, mut h) = (r.x, r.y, r.w, r.h);
+            let rs = ui
+                .vertical(|ui| {
+                    let top = ui
+                        .horizontal(|ui| {
+                            let a = ui.add(egui::DragValue::new(&mut x).speed(1.0).prefix("x "));
+                            let b = ui.add(egui::DragValue::new(&mut y).speed(1.0).prefix("y "));
+                            (a, b)
+                        })
+                        .inner;
+                    let bot = ui
+                        .horizontal(|ui| {
+                            let a = ui.add(egui::DragValue::new(&mut w).speed(1.0).prefix("w "));
+                            let b = ui.add(egui::DragValue::new(&mut h).speed(1.0).prefix("h "));
+                            (a, b)
+                        })
+                        .inner;
+                    [top.0, top.1, bot.0, bot.1]
+                })
+                .inner;
+            rs.iter().any(|r| r.changed()).then(|| {
+                let merge = rs.iter().any(|r| r.dragged() || r.has_focus());
+                (Value::Rect(Rect::new(x, y, w, h)), merge)
             })
         }
         Value::InstanceRef(t) => {

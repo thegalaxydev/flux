@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use flux_core::{InstanceId, UDim2, Value, World};
+use flux_core::{InstanceId, Rect, UDim2, Value, World};
 use flux_runtime::{InputFrame, LogLevel, Session};
 use glam::Vec2;
 
@@ -442,4 +442,71 @@ fn cyclic_require_is_reported() {
         logs.iter().any(|l| l.level == LogLevel::Error && l.message.contains("cyclic")),
         "expected a cyclic-require error: {logs:?}"
     );
+}
+
+/// End-to-end: an AnimationPlayer with AutoPlay set drives its parent Sprite's
+/// SourceRect (and Texture) through a real `.frames.json` loaded from disk.
+#[test]
+fn animation_player_autoplays_and_advances_source_rect() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("flux_anim_test_{nanos}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("hero.frames.json"),
+        r#"{
+            "texture": "hero.png",
+            "clips": { "Run": { "loop": true, "frames": [
+                { "rect": [0,0,16,16], "duration": 0.1 },
+                { "rect": [16,0,16,16], "duration": 0.1 },
+                { "rect": [32,0,16,16], "duration": 0.1 }
+            ]}}
+        }"#,
+    )
+    .unwrap();
+
+    let mut w = World::new();
+    let ws = w.workspace();
+    let sprite = w.create("Sprite", ws).unwrap();
+    w.set_name(sprite, "Hero").unwrap();
+    let player = w.create("AnimationPlayer", sprite).unwrap();
+    w.set_prop(player, "Frames", Value::Asset("hero.frames.json".into())).unwrap();
+    w.set_prop(player, "AutoPlay", Value::String("Run".into())).unwrap();
+    let json = w.to_json();
+
+    let mut session = Session::from_scene_json(&json, &dir).unwrap();
+
+    let rect_of = |s: &Session| {
+        let rc = s.world();
+        let w = rc.borrow();
+        let hero = w.find_first_child(w.workspace(), "Hero").unwrap();
+        match w.get_prop(hero, "SourceRect") {
+            Some(Value::Rect(r)) => *r,
+            other => panic!("unexpected SourceRect {other:?}"),
+        }
+    };
+    let texture_of = |s: &Session| {
+        let rc = s.world();
+        let w = rc.borrow();
+        let hero = w.find_first_child(w.workspace(), "Hero").unwrap();
+        match w.get_prop(hero, "Texture") {
+            Some(Value::Asset(t)) => t.clone(),
+            other => panic!("unexpected Texture {other:?}"),
+        }
+    };
+
+    // AutoPlay applied frame 0 and the library's default texture at launch.
+    assert_eq!(rect_of(&session), Rect::new(0.0, 0.0, 16.0, 16.0));
+    assert_eq!(texture_of(&session), "hero.png");
+
+    session.step(0.1, &idle()); // -> frame 1
+    assert_eq!(rect_of(&session), Rect::new(16.0, 0.0, 16.0, 16.0));
+    session.step(0.1, &idle()); // -> frame 2
+    assert_eq!(rect_of(&session), Rect::new(32.0, 0.0, 16.0, 16.0));
+    session.step(0.1, &idle()); // loops back to frame 0
+    assert_eq!(rect_of(&session), Rect::new(0.0, 0.0, 16.0, 16.0));
+
+    std::fs::remove_dir_all(&dir).ok();
 }

@@ -6,7 +6,7 @@ use egui::epaint::{Mesh, Vertex};
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind};
 use flux_core::gui::{self, Rect2};
 use flux_core::transform::SpriteXform;
-use flux_core::{ClassId, Color, InstanceId, Value, World, registry};
+use flux_core::{ClassId, Color, InstanceId, Rect as SrcRect, Value, World, registry};
 
 pub use texture::TextureCache;
 
@@ -136,8 +136,25 @@ pub fn draw_scene(
         if let Some(handle) = tex {
             let flip_x = matches!(world.get_prop(id, "FlipX"), Some(Value::Bool(true)));
             let flip_y = matches!(world.get_prop(id, "FlipY"), Some(Value::Bool(true)));
-            let (u0, u1) = if flip_x { (1.0, 0.0) } else { (0.0, 1.0) };
-            let (v0, v1) = if flip_y { (1.0, 0.0) } else { (0.0, 1.0) };
+            // Map the SourceRect (in texture pixels) to UVs; a whole-texture
+            // rect (zero size) uses the full 0..1 range. Flips swap the edges.
+            let src = match world.get_prop(id, "SourceRect") {
+                Some(Value::Rect(r)) => *r,
+                _ => SrcRect::default(),
+            };
+            let sz = handle.size();
+            let (tw, th) = (sz[0] as f32, sz[1] as f32);
+            let (mut u0, mut v0, mut u1, mut v1) = if src.is_whole() || tw <= 0.0 || th <= 0.0 {
+                (0.0, 0.0, 1.0, 1.0)
+            } else {
+                (src.x / tw, src.y / th, (src.x + src.w) / tw, (src.y + src.h) / th)
+            };
+            if flip_x {
+                std::mem::swap(&mut u0, &mut u1);
+            }
+            if flip_y {
+                std::mem::swap(&mut v0, &mut v1);
+            }
             // UVs match corner order TL, TR, BR, BL.
             let uvs = [
                 egui::pos2(u0, v0),

@@ -82,6 +82,23 @@ pub(crate) fn world_handle(lua: &Lua) -> WorldHandle {
         .clone()
 }
 
+pub(crate) type AnimCacheHandle = Rc<RefCell<flux_core::animation::AnimationCache>>;
+
+pub(crate) fn anim_cache(lua: &Lua) -> AnimCacheHandle {
+    lua.app_data_ref::<AnimCacheHandle>()
+        .expect("anim cache app data missing")
+        .clone()
+}
+
+/// Project root that animation library asset paths resolve against — the same
+/// root `require` uses for modules.
+pub(crate) fn anim_root(lua: &Lua) -> PathBuf {
+    lua.app_data_ref::<ModuleRoot>()
+        .expect("module root app data missing")
+        .0
+        .clone()
+}
+
 pub struct ScriptHost {
     lua: Lua,
     world: WorldHandle,
@@ -89,6 +106,8 @@ pub struct ScriptHost {
     heartbeat: signal::Signal,
     input: Rc<RefCell<InputState>>,
     button_signals: ButtonSignals,
+    cache: AnimCacheHandle,
+    root: PathBuf,
     prev_left: bool,
     log: Log,
 }
@@ -101,12 +120,14 @@ impl ScriptHost {
         let heartbeat = signal::Signal::default();
         let input = Rc::new(RefCell::new(InputState::default()));
         let button_signals: ButtonSignals = Rc::new(RefCell::new(HashMap::new()));
+        let cache: AnimCacheHandle = Rc::new(RefCell::new(Default::default()));
         let log = Log::default();
 
         lua.set_app_data(world.clone());
         lua.set_app_data(input.clone());
         lua.set_app_data(heartbeat.clone());
         lua.set_app_data(button_signals.clone());
+        lua.set_app_data(cache.clone());
         lua.set_app_data(provider);
         lua.set_app_data(log.clone());
         // Where `require` resolves Module source paths, and its result cache.
@@ -114,6 +135,12 @@ impl ScriptHost {
         lua.set_app_data(ModuleCache::default());
 
         setup_globals(&lua, &world, &scheduler, &log).map_err(|e| e.to_string())?;
+        // Reset players and kick off any AutoPlay clip before scripts run.
+        flux_core::animation::init(
+            &mut world.borrow_mut(),
+            &mut cache.borrow_mut(),
+            script_root,
+        );
 
         let host = Self {
             lua,
@@ -122,6 +149,8 @@ impl ScriptHost {
             heartbeat,
             input,
             button_signals,
+            cache,
+            root: script_root.to_path_buf(),
             prev_left: false,
             log,
         };
@@ -147,6 +176,14 @@ impl ScriptHost {
         }
         scheduler::step(&self.lua, &self.scheduler, &self.log, dt);
         signal::fire(&self.lua, &self.scheduler, &self.log, &self.heartbeat, dt);
+        // Advance animation players after scripts have had a chance to
+        // start/stop them this frame.
+        flux_core::animation::advance(
+            &mut self.world.borrow_mut(),
+            &mut self.cache.borrow_mut(),
+            &self.root,
+            dt,
+        );
         self.process_gui_clicks(input);
     }
 
@@ -279,6 +316,7 @@ fn setup_globals(
     g.set("Color", types::color_table(lua)?)?;
     g.set("UDim", types::udim_table(lua)?)?;
     g.set("UDim2", types::udim2_table(lua)?)?;
+    g.set("Rect", types::rect_table(lua)?)?;
     g.set("Enum", enums::enum_table(lua)?)?;
     g.set("task", scheduler::task_table(lua, scheduler.clone())?)?;
     g.set("Input", input_table(lua)?)?;

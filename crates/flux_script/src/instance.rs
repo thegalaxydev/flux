@@ -4,7 +4,7 @@ use mlua::{
 };
 
 use crate::signal::{LuaSignal, Signal};
-use crate::types::{LuaColor, LuaUDim2, LuaVec2, as_color, as_udim2, as_vec2};
+use crate::types::{LuaColor, LuaRect, LuaUDim2, LuaVec2, as_color, as_rect, as_udim2, as_vec2};
 use crate::{input_handle, world_handle};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -27,6 +27,14 @@ fn is_button(w: &World, id: InstanceId) -> bool {
         (w.class_of(id), registry().find("Button")),
         (Some(c), Some(b)) if registry().is_a(c, b)
     )
+}
+
+fn is_player(w: &World, id: InstanceId) -> bool {
+    w.class_name(id) == Some("AnimationPlayer")
+}
+
+fn anim_only(method: &str) -> mlua::Error {
+    mlua::Error::RuntimeError(format!("{method} can only be called on an AnimationPlayer"))
 }
 
 fn aabb(w: &World, id: InstanceId) -> Option<(glam::Vec2, glam::Vec2)> {
@@ -143,6 +151,58 @@ impl UserData for LuaInstance {
             }
             Ok(out)
         });
+        // ---- AnimationPlayer controls ----
+        m.add_method("Play", |lua, this, (clip, restart): (String, Option<bool>)| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            if !is_player(&w, this.0) {
+                return Err(anim_only("Play"));
+            }
+            let cache = crate::anim_cache(lua);
+            let root = crate::anim_root(lua);
+            flux_core::animation::play(
+                &mut w,
+                &mut cache.borrow_mut(),
+                &root,
+                this.0,
+                &clip,
+                restart.unwrap_or(false),
+            );
+            Ok(())
+        });
+        m.add_method("Stop", |lua, this, ()| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            if !is_player(&w, this.0) {
+                return Err(anim_only("Stop"));
+            }
+            let cache = crate::anim_cache(lua);
+            let root = crate::anim_root(lua);
+            flux_core::animation::stop(&mut w, &mut cache.borrow_mut(), &root, this.0);
+            Ok(())
+        });
+        m.add_method("Pause", |lua, this, ()| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            if !is_player(&w, this.0) {
+                return Err(anim_only("Pause"));
+            }
+            flux_core::animation::pause(&mut w, this.0);
+            Ok(())
+        });
+        m.add_method("Resume", |lua, this, ()| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            if !is_player(&w, this.0) {
+                return Err(anim_only("Resume"));
+            }
+            flux_core::animation::resume(&mut w, this.0);
+            Ok(())
+        });
         m.add_meta_method(MetaMethod::Index, |lua, this, key: String| {
             index(lua, this.0, &key)
         });
@@ -178,6 +238,12 @@ fn index(lua: &Lua, id: InstanceId, key: &str) -> mlua::Result<LuaValue> {
                 .expect("heartbeat app data")
                 .clone();
             LuaSignal(signal).into_lua(lua)
+        }
+        "IsPlaying" if is_player(&w, id) => {
+            Ok(LuaValue::Boolean(matches!(
+                w.get_prop(id, "Playing"),
+                Some(Value::Bool(true))
+            )))
         }
         "Activated" if is_button(&w, id) => {
             let signals = lua
@@ -265,6 +331,7 @@ fn value_to_lua(lua: &Lua, w: &World, v: &Value) -> mlua::Result<LuaValue> {
         Value::Vec2(v) => LuaVec2(*v).into_lua(lua),
         Value::UDim2(u) => LuaUDim2(*u).into_lua(lua),
         Value::Color(c) => LuaColor(*c).into_lua(lua),
+        Value::Rect(r) => LuaRect(*r).into_lua(lua),
         Value::InstanceRef(Some(t)) if w.contains(*t) => LuaInstance(*t).into_lua(lua),
         Value::InstanceRef(_) => Ok(LuaValue::Nil),
     }
@@ -292,6 +359,7 @@ fn lua_to_value(expected: ValueType, v: &LuaValue) -> Result<Value, &'static str
         ValueType::Vec2 => as_vec2(v).map(Value::Vec2).ok_or(got),
         ValueType::UDim2 => as_udim2(v).map(Value::UDim2).ok_or(got),
         ValueType::Color => as_color(v).map(Value::Color).ok_or(got),
+        ValueType::Rect => as_rect(v).map(Value::Rect).ok_or(got),
         ValueType::InstanceRef => match v {
             LuaValue::Nil => Ok(Value::InstanceRef(None)),
             v => as_instance(v)

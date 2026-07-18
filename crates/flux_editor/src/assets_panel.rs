@@ -60,6 +60,17 @@ pub fn show(
             {
                 textures.clear();
             }
+            if icons
+                .icon(Icon::Animation)
+                .size(16.0)
+                .button(ui)
+                .on_hover_text("New animation library (.frames.json)")
+                .clicked()
+            {
+                if let Ok(rel) = create_frames_library(root, &state.asset_dir) {
+                    state.open_animation = Some(rel);
+                }
+            }
         });
     });
     ui.separator();
@@ -161,6 +172,9 @@ fn row(
     if is_script && resp.double_clicked() {
         state.open_script = Some((rel.to_string(), None));
     }
+    if kind == AssetKind::Animation && resp.double_clicked() {
+        state.open_animation = Some(rel.to_string());
+    }
 
     if kind == AssetKind::Image {
         resp.on_hover_text("Drag onto a sprite or into the Explorer").context_menu(|ui| {
@@ -184,9 +198,34 @@ fn row(
                 ui.close();
             }
         });
+    } else if kind == AssetKind::Animation {
+        resp.on_hover_text("Double-click to open in the Animation Editor");
     } else if is_script {
         resp.on_hover_text("Double-click to open · drag into the Explorer");
     }
+}
+
+/// Starter content for a freshly created animation library.
+const STARTER_FRAMES: &str = "{\n  \"texture\": \"\",\n  \"clips\": {\n    \"New\": { \"loop\": true, \"frames\": [] }\n  }\n}\n";
+
+/// Create a uniquely-named `*.frames.json` in `dir` (relative to `root`) and
+/// return its project-relative path.
+fn create_frames_library(root: &Path, dir: &Path) -> std::io::Result<String> {
+    let mut n = 0;
+    let (name, full) = loop {
+        let name = if n == 0 {
+            "untitled.frames.json".to_string()
+        } else {
+            format!("untitled_{n}.frames.json")
+        };
+        let full = root.join(dir).join(&name);
+        if !full.exists() {
+            break (name, full);
+        }
+        n += 1;
+    };
+    std::fs::write(&full, STARTER_FRAMES)?;
+    Ok(join_rel(dir, &name))
 }
 
 /// Build a project-root-relative path (forward-slashed) for `dir/name`, where

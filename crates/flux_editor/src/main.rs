@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod animation_editor;
 mod app;
 mod assets_panel;
 mod command;

@@ -62,6 +62,29 @@ impl UDim2 {
     }
 }
 
+/// A rectangle in texture pixels: top-left `(x, y)` plus `(w, h)`. Used for a
+/// `SpriteRenderer`'s source region (and, later, 9-slice margins). A zero or
+/// negative extent means "the whole texture" — see [`Rect::is_whole`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Rect {
+    pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { x, y, w, h }
+    }
+
+    /// Whole-texture sentinel: a non-positive width or height means the renderer
+    /// should draw the entire image rather than a sub-region.
+    pub fn is_whole(self) -> bool {
+        self.w <= 0.0 || self.h <= 0.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValueType {
     Bool,
@@ -70,6 +93,7 @@ pub enum ValueType {
     Vec2,
     UDim2,
     Color,
+    Rect,
     Asset,
     InstanceRef,
 }
@@ -82,6 +106,7 @@ pub enum Value {
     Vec2(Vec2),
     UDim2(UDim2),
     Color(Color),
+    Rect(Rect),
     Asset(String),
     InstanceRef(Option<InstanceId>),
 }
@@ -95,6 +120,7 @@ impl Value {
             Value::Vec2(_) => ValueType::Vec2,
             Value::UDim2(_) => ValueType::UDim2,
             Value::Color(_) => ValueType::Color,
+            Value::Rect(_) => ValueType::Rect,
             Value::Asset(_) => ValueType::Asset,
             Value::InstanceRef(_) => ValueType::InstanceRef,
         }

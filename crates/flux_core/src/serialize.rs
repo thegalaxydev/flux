@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::class::registry;
 use crate::error::CoreError;
-use crate::value::{Color, UDim2, Value};
+use crate::value::{Color, Rect, UDim2, Value};
 use crate::world::{InstanceId, World};
 
 pub const SCENE_VERSION: u32 = 1;
@@ -38,6 +38,8 @@ enum SavedValue {
     /// `[x_scale, x_offset, y_scale, y_offset]`.
     UDim2([f32; 4]),
     Color([f32; 4]),
+    /// `[x, y, w, h]` in texture pixels.
+    Rect([f32; 4]),
     Asset(String),
     Ref(Option<u64>),
 }
@@ -129,6 +131,7 @@ fn save_value(value: &Value, ref_ids: &HashMap<InstanceId, u64>) -> SavedValue {
             SavedValue::UDim2([u.x.scale, u.x.offset, u.y.scale, u.y.offset])
         }
         Value::Color(c) => SavedValue::Color([c.r, c.g, c.b, c.a]),
+        Value::Rect(r) => SavedValue::Rect([r.x, r.y, r.w, r.h]),
         Value::Asset(s) => SavedValue::Asset(s.clone()),
         Value::InstanceRef(t) => SavedValue::Ref(t.and_then(|t| ref_ids.get(&t).copied())),
     }
@@ -174,6 +177,7 @@ fn load_value(sv: &SavedValue) -> Value {
         SavedValue::Vec2([x, y]) => Value::Vec2(glam::Vec2::new(*x, *y)),
         SavedValue::UDim2([xs, xo, ys, yo]) => Value::UDim2(UDim2::new(*xs, *xo, *ys, *yo)),
         SavedValue::Color([r, g, b, a]) => Value::Color(Color::new(*r, *g, *b, *a)),
+        SavedValue::Rect([x, y, w, h]) => Value::Rect(Rect::new(*x, *y, *w, *h)),
         SavedValue::Asset(s) => Value::Asset(s.clone()),
         SavedValue::Ref(None) => Value::InstanceRef(None),
         SavedValue::Ref(Some(_)) => unreachable!(),

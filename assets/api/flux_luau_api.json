@@ -219,7 +219,11 @@
         "IsA": { "kind": "method", "params": [{ "name": "className", "type": "string" }], "returns": "boolean", "doc": "Returns true if this object is of the given class (or a subclass)." },
         "Clone": { "kind": "method", "params": [], "returns": "Instance", "doc": "Returns a deep copy of this object." },
         "Destroy": { "kind": "method", "params": [], "returns": "()", "doc": "Removes this object from the scene and frees it." },
-        "GetTouchingSprites": { "kind": "method", "params": [], "returns": "{Instance}", "doc": "Sprite only: returns sprites overlapping this one in the workspace." }
+        "GetTouchingSprites": { "kind": "method", "params": [], "returns": "{Instance}", "doc": "Sprite only: returns sprites overlapping this one in the workspace." },
+        "Play": { "kind": "method", "params": [], "returns": "()", "doc": "SpriteAnimator only: starts spritesheet playback from the first frame." },
+        "Pause": { "kind": "method", "params": [], "returns": "()", "doc": "SpriteAnimator only: freezes playback on the current frame." },
+        "Resume": { "kind": "method", "params": [], "returns": "()", "doc": "SpriteAnimator only: resumes playback from the current TimePosition." },
+        "Stop": { "kind": "method", "params": [], "returns": "()", "doc": "SpriteAnimator only: stops playback and resets to the first frame." }
       }
     },
     "Vec2": {

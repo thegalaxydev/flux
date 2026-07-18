@@ -73,6 +73,10 @@ pub fn classify(name: &str, is_dir: bool) -> AssetKind {
     if lower.ends_with(".scene.json") {
         return AssetKind::Scene;
     }
+    // A `*.frames.json` is a spritesheet animation library (named clips).
+    if lower.ends_with(".frames.json") {
+        return AssetKind::Animation;
+    }
     // `*.module.luau` (or `.lua`) is a Module; a plain `*.luau` is a Script.
     if lower.ends_with(".module.luau") || lower.ends_with(".module.lua") {
         return AssetKind::LuaModule;

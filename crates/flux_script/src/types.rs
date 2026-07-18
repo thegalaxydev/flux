@@ -1,4 +1,4 @@
-use flux_core::{Color, UDim, UDim2};
+use flux_core::{Color, Rect, UDim, UDim2};
 use glam::Vec2;
 use mlua::{
     Lua, MetaMethod, MultiValue, Table, UserData, UserDataFields, UserDataMethods, UserDataRef,
@@ -23,6 +23,12 @@ pub fn as_color(v: &LuaValue) -> Option<Color> {
 pub fn as_udim2(v: &LuaValue) -> Option<UDim2> {
     v.as_userdata()
         .and_then(|u| u.borrow::<LuaUDim2>().ok())
+        .map(|r| r.0)
+}
+
+pub fn as_rect(v: &LuaValue) -> Option<Rect> {
+    v.as_userdata()
+        .and_then(|u| u.borrow::<LuaRect>().ok())
         .map(|r| r.0)
 }
 
@@ -75,6 +81,43 @@ pub fn vec2_table(lua: &Lua) -> mlua::Result<Table> {
     )?;
     t.set("zero", LuaVec2(Vec2::ZERO))?;
     t.set("one", LuaVec2(Vec2::ONE))?;
+    Ok(t)
+}
+
+#[derive(Clone, Copy)]
+pub struct LuaRect(pub Rect);
+
+impl UserData for LuaRect {
+    fn add_fields<F: UserDataFields<Self>>(f: &mut F) {
+        f.add_field_method_get("X", |_, r| Ok(r.0.x));
+        f.add_field_method_get("Y", |_, r| Ok(r.0.y));
+        f.add_field_method_get("Width", |_, r| Ok(r.0.w));
+        f.add_field_method_get("Height", |_, r| Ok(r.0.h));
+    }
+
+    fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+        m.add_meta_method(MetaMethod::Eq, |_, a, b: UserDataRef<LuaRect>| Ok(a.0 == b.0));
+        m.add_meta_method(MetaMethod::ToString, |_, r, ()| {
+            Ok(format!("{}, {}, {}, {}", r.0.x, r.0.y, r.0.w, r.0.h))
+        });
+    }
+}
+
+pub fn rect_table(lua: &Lua) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set(
+        "new",
+        lua.create_function(
+            |_, (x, y, w, h): (Option<f32>, Option<f32>, Option<f32>, Option<f32>)| {
+                Ok(LuaRect(Rect::new(
+                    x.unwrap_or(0.0),
+                    y.unwrap_or(0.0),
+                    w.unwrap_or(0.0),
+                    h.unwrap_or(0.0),
+                )))
+            },
+        )?,
+    )?;
     Ok(t)
 }
 

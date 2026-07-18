@@ -1,3 +1,4 @@
+pub mod animation;
 mod class;
 mod error;
 pub mod gui;
@@ -13,5 +14,5 @@ pub use gui::Rect2;
 pub use transform::SpriteXform;
 pub use serialize::SCENE_VERSION;
 pub use subtree::Subtree;
-pub use value::{Color, UDim, UDim2, Value, ValueType};
+pub use value::{Color, Rect, UDim, UDim2, Value, ValueType};
 pub use world::{InstanceId, World};

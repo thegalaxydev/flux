@@ -43,6 +43,8 @@ pub struct UiState {
     pub viewport_rect: egui::Rect,
     pub explorer: crate::explorer::ExplorerState,
     pub open_script: Option<(String, Option<(usize, usize)>)>,
+    /// A `*.frames.json` asset to open in the animation editor.
+    pub open_animation: Option<String>,
     /// A Script/Module without a backing file whose source should be generated;
     /// drained into a save-file dialog on the next frame.
     pub create_source: Option<InstanceId>,
@@ -67,6 +69,7 @@ impl Default for UiState {
             viewport_rect: egui::Rect::NOTHING,
             explorer: crate::explorer::ExplorerState::default(),
             open_script: None,
+            open_animation: None,
             create_source: None,
         }
     }
@@ -90,6 +93,7 @@ pub struct EditorApp {
     icons: Icons,
     textures: TextureCache,
     editor: ScriptEditor,
+    anim: crate::animation_editor::AnimationEditor,
     play: Option<Session>,
     logs: Vec<LogEntry>,
     path: Option<PathBuf>,
@@ -123,6 +127,7 @@ impl EditorApp {
             icons: Icons::lucide(),
             textures: TextureCache::default(),
             editor: ScriptEditor::default(),
+            anim: crate::animation_editor::AnimationEditor::default(),
             play: None,
             logs: Vec::new(),
             path,
@@ -378,6 +383,7 @@ impl EditorApp {
         self.logs.clear();
         self.textures.clear();
         self.editor.clear();
+        self.anim = crate::animation_editor::AnimationEditor::default();
     }
 
     fn save(&mut self, save_as: bool) -> bool {
@@ -1218,6 +1224,19 @@ impl eframe::App for EditorApp {
                 Some(root) => self.editor.open(&rel, &root, line),
                 None => self.ui.status = "Save the project before opening scripts".to_string(),
             }
+        }
+
+        if let Some(rel) = self.ui.open_animation.take() {
+            match self.project_root() {
+                Some(root) => match std::fs::read_to_string(root.join(&rel)) {
+                    Ok(json) => self.anim.open_doc(&rel, &json),
+                    Err(e) => self.ui.status = format!("Open failed: {e}"),
+                },
+                None => self.ui.status = "Save the project before editing animations".to_string(),
+            }
+        }
+        if let Some(root) = self.project_root() {
+            self.anim.show(ctx, &mut self.textures, &root, &self.icons);
         }
 
         if let Some(id) = self.ui.create_source.take() {

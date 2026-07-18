@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use glam::Vec2;
 
-use crate::value::{Color, UDim2, Value, ValueType};
+use crate::value::{Color, Rect, UDim2, Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ClassId(usize);
@@ -116,6 +116,10 @@ impl ClassRegistry {
                 prop("Locked", Value::Bool(false)),
             ],
         );
+        // The 2D render node. It only draws: a texture region (`SourceRect`,
+        // whole-texture when zero-sized) stretched to `Size`, tinted and
+        // flipped. It knows nothing about animation — an `AnimationPlayer`
+        // drives its `Texture`/`SourceRect` each frame.
         reg.add(
             "Sprite",
             Some("Node2D"),
@@ -125,9 +129,33 @@ impl ClassRegistry {
                 prop("Texture", Value::Asset(String::new())),
                 prop("Size", Value::Vec2(Vec2::new(100.0, 100.0))),
                 prop("Pivot", Value::Vec2(Vec2::new(0.5, 0.5))),
+                // Sub-region of the texture, in pixels. Zero size = whole image.
+                prop("SourceRect", Value::Rect(Rect::default())),
                 prop("Tint", Value::Color(Color::WHITE)),
                 prop("FlipX", Value::Bool(false)),
                 prop("FlipY", Value::Bool(false)),
+                // Reserved for a future shader/material system.
+                prop("Material", Value::Asset(String::new())),
+            ],
+        );
+        // Plays spritesheet clips from a `.frames.json` library, driving its
+        // parent Sprite. Controlled from Lua via :Play(name)/:Pause()/:Resume()/
+        // :Stop(). Runtime state (CurrentClip/TimePosition/CurrentFrame/Playing)
+        // is exposed as properties so it is inspectable and serializable.
+        reg.add(
+            "AnimationPlayer",
+            Some("Instance"),
+            true,
+            false,
+            vec![
+                prop("Frames", Value::Asset(String::new())),
+                // Clip name to start automatically on play; empty = none.
+                prop("AutoPlay", Value::String(String::new())),
+                prop("Speed", Value::Number(1.0)),
+                prop("CurrentClip", Value::String(String::new())),
+                prop("TimePosition", Value::Number(0.0)),
+                prop("CurrentFrame", Value::Number(0.0)),
+                prop("Playing", Value::Bool(false)),
             ],
         );
         reg.add(
