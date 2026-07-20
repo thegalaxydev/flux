@@ -9,16 +9,19 @@ use flux_script::ScriptHost;
 pub use flux_data::{DataBackend, DataError};
 pub use flux_script::{InputFrame, LogEntry, LogLevel};
 
-/// How a play session is configured. Currently just which persistence backend
-/// `DataStoreService` writes to.
+/// How a play session is configured: the persistence backend
+/// `DataStoreService` writes to, and the current scene's project-relative path
+/// (so `Scene`/`Scene.Name`/`Scene:Reload` can report and re-load it).
 pub struct SessionOptions {
     pub data: DataBackend,
+    pub scene: String,
 }
 
 impl Default for SessionOptions {
     fn default() -> Self {
         Self {
             data: DataBackend::SqliteMemory,
+            scene: String::new(),
         }
     }
 }
@@ -57,11 +60,17 @@ impl Session {
         };
         let provider: Rc<dyn PersistenceProvider> = Rc::from(provider);
 
-        let host = ScriptHost::new(world, script_root, provider)?;
+        let host = ScriptHost::new(world, script_root, provider, options.scene)?;
         if let Some(warning) = warning {
             host.push_error(warning);
         }
         Ok(Session { host })
+    }
+
+    /// A scene switch requested from Luau via `Scene:Load`/`Scene:Reload`, if any.
+    /// The caller (editor/player) reloads the new scene into a fresh session.
+    pub fn take_scene_request(&self) -> Option<String> {
+        self.host.take_scene_request()
     }
 
     pub fn step(&mut self, dt: f64, input: &InputFrame) {

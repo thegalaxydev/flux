@@ -8,6 +8,44 @@ use crate::{input_handle, world_handle};
 #[derive(Clone, Copy, PartialEq)]
 pub struct LuaInstance(pub InstanceId);
 
+/// The `Scene` global: switch scenes and read the current scene's name.
+#[derive(Clone)]
+pub(crate) struct LuaScene(pub(crate) crate::SceneHandle);
+
+/// Scene display name from a relative path: the file name without its
+/// `.scene.json`/`.json` extension (`levels/hub.scene.json` -> `hub`).
+fn scene_name(rel: &str) -> String {
+    let file = rel.rsplit(['/', '\\']).next().unwrap_or(rel);
+    if file.to_ascii_lowercase().ends_with(".scene.json") {
+        file[..file.len() - ".scene.json".len()].to_string()
+    } else if let Some((stem, _)) = file.rsplit_once('.') {
+        stem.to_string()
+    } else {
+        file.to_string()
+    }
+}
+
+impl UserData for LuaScene {
+    fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+        m.add_method("Load", |_, this, path: String| {
+            this.0.borrow_mut().request = Some(path);
+            Ok(())
+        });
+        m.add_method("Reload", |_, this, ()| {
+            let current = this.0.borrow().current.clone();
+            this.0.borrow_mut().request = Some(current);
+            Ok(())
+        });
+        m.add_meta_method(MetaMethod::Index, |lua, this, key: String| match key.as_str() {
+            "Name" => scene_name(&this.0.borrow().current).into_lua(lua),
+            "Path" => this.0.borrow().current.clone().into_lua(lua),
+            other => Err(mlua::Error::RuntimeError(format!(
+                "{other} is not a valid member of Scene"
+            ))),
+        });
+    }
+}
+
 fn destroyed() -> mlua::Error {
     mlua::Error::RuntimeError("attempt to use a destroyed Instance".to_string())
 }

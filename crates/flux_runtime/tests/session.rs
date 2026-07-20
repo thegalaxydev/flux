@@ -267,7 +267,7 @@ fn launch_inline(root: &Path, src: &str, backend: flux_runtime::DataBackend) -> 
     Session::launch(
         &w.to_json(),
         root,
-        flux_runtime::SessionOptions { data: backend },
+        flux_runtime::SessionOptions { data: backend, ..Default::default() },
     )
     .unwrap()
 }
@@ -507,6 +507,36 @@ fn cyclic_require_is_reported() {
             .any(|l| l.level == LogLevel::Error && l.message.contains("cyclic")),
         "expected a cyclic-require error: {logs:?}"
     );
+}
+
+#[test]
+fn scene_global_reports_name_and_requests_load() {
+    let mut w = World::new();
+    let ws = w.workspace();
+    let s = w.create("Script", ws).unwrap();
+    w.set_prop(s, "SourcePath", Value::Asset("scripts/scene_test.luau".into()))
+        .unwrap();
+    let json = w.to_json();
+
+    let session = Session::launch(
+        &json,
+        fixtures(),
+        flux_runtime::SessionOptions {
+            data: flux_runtime::DataBackend::SqliteMemory,
+            scene: "levels/main.scene.json".into(),
+        },
+    )
+    .unwrap();
+
+    // `Scene.Name` is the current scene's name (extension stripped).
+    let logs = session.drain_logs();
+    assert!(
+        logs.iter().any(|l| l.message == "scene is main"),
+        "Scene.Name not reported: {logs:?}"
+    );
+    // The top-level `Scene:Load` queued a switch, drained exactly once.
+    assert_eq!(session.take_scene_request().as_deref(), Some("hub.scene.json"));
+    assert_eq!(session.take_scene_request(), None);
 }
 
 /// End-to-end: an `AnimatedSprite` with AutoPlay set advances its own

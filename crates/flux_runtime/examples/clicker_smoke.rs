@@ -48,6 +48,7 @@ fn main() {
     let json = std::fs::read_to_string(root.join("main.scene.json")).expect("read scene");
     let options = SessionOptions {
         data: DataBackend::SqliteFile(db_path.clone()),
+        ..Default::default()
     };
     let mut session = Session::launch(&json, root, options).expect("load scene");
     dump(&session, "load");
@@ -90,6 +91,7 @@ fn main() {
         root,
         SessionOptions {
             data: DataBackend::SqliteFile(db_path.clone()),
+            ..Default::default()
         },
     )
     .expect("reopen");

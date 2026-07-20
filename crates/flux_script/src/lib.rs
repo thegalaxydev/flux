@@ -76,6 +76,15 @@ pub struct InputState {
 pub(crate) type WorldHandle = Rc<RefCell<World>>;
 pub(crate) type ButtonSignals = Rc<RefCell<HashMap<InstanceId, Signal>>>;
 
+/// Scene-switching state behind the `Scene` global: the current scene (relative
+/// to the project root) and a pending switch the host drains each step.
+#[derive(Default)]
+pub struct SceneState {
+    pub current: String,
+    pub request: Option<String>,
+}
+pub(crate) type SceneHandle = Rc<RefCell<SceneState>>;
+
 pub(crate) fn world_handle(lua: &Lua) -> WorldHandle {
     lua.app_data_ref::<WorldHandle>()
         .expect("world app data missing")
@@ -94,13 +103,19 @@ pub struct ScriptHost {
     input: Rc<RefCell<InputState>>,
     button_signals: ButtonSignals,
     cache: AnimCacheHandle,
+    scene: SceneHandle,
     root: PathBuf,
     prev_left: bool,
     log: Log,
 }
 
 impl ScriptHost {
-    pub fn new(world: World, script_root: &Path, provider: Provider) -> Result<Self, String> {
+    pub fn new(
+        world: World,
+        script_root: &Path,
+        provider: Provider,
+        scene_path: String,
+    ) -> Result<Self, String> {
         let lua = Lua::new();
         let world: WorldHandle = Rc::new(RefCell::new(world));
         let scheduler = Rc::new(RefCell::new(scheduler::Scheduler::default()));
@@ -108,6 +123,10 @@ impl ScriptHost {
         let input = Rc::new(RefCell::new(InputState::default()));
         let button_signals: ButtonSignals = Rc::new(RefCell::new(HashMap::new()));
         let cache: AnimCacheHandle = Rc::new(RefCell::new(Default::default()));
+        let scene: SceneHandle = Rc::new(RefCell::new(SceneState {
+            current: scene_path,
+            request: None,
+        }));
         let log = Log::default();
 
         lua.set_app_data(world.clone());
@@ -121,6 +140,9 @@ impl ScriptHost {
         lua.set_app_data(ModuleCache::default());
 
         setup_globals(&lua, &world, &scheduler, &log).map_err(|e| e.to_string())?;
+        lua.globals()
+            .set("Scene", instance::LuaScene(scene.clone()))
+            .map_err(|e| e.to_string())?;
         // Reset AnimatedSprites and kick off any AutoPlay animation before scripts run.
         flux_core::animation::init(&mut world.borrow_mut());
 
@@ -132,6 +154,7 @@ impl ScriptHost {
             input,
             button_signals,
             cache,
+            scene,
             root: script_root.to_path_buf(),
             prev_left: false,
             log,
@@ -226,6 +249,11 @@ impl ScriptHost {
 
     pub fn drain_logs(&self) -> Vec<LogEntry> {
         self.log.drain()
+    }
+
+    /// Take a pending scene switch requested via `Scene:Load`/`Scene:Reload`.
+    pub fn take_scene_request(&self) -> Option<String> {
+        self.scene.borrow_mut().request.take()
     }
 
     fn start_scripts(&self, script_root: &Path) {

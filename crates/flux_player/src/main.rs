@@ -14,6 +14,28 @@ struct Player {
     root: PathBuf,
 }
 
+impl Player {
+    /// Switch to another scene (from `Scene:Load`), loaded from `rel` under the
+    /// project root.
+    fn load_scene(&mut self, rel: &str) {
+        let json = match std::fs::read_to_string(self.root.join(rel)) {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("Scene:Load '{rel}': {e}");
+                return;
+            }
+        };
+        let options = SessionOptions {
+            data: DataBackend::SqliteFile(self.root.join(".flux/data/playtest.sqlite")),
+            scene: rel.to_string(),
+        };
+        match Session::launch(&json, &self.root, options) {
+            Ok(session) => self.session = session,
+            Err(e) => eprintln!("Scene:Load '{rel}': {e}"),
+        }
+    }
+}
+
 impl eframe::App for Player {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default()
@@ -43,6 +65,9 @@ impl eframe::App for Player {
             });
         for entry in self.session.drain_logs() {
             eprintln!("[{:?}] {}", entry.level, entry.message);
+        }
+        if let Some(rel) = self.session.take_scene_request() {
+            self.load_scene(&rel);
         }
         ctx.request_repaint();
     }
@@ -89,8 +114,13 @@ fn main() -> eframe::Result {
             std::process::exit(1);
         }
     };
+    let scene_rel = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let options = SessionOptions {
         data: DataBackend::SqliteFile(root.join(".flux/data/playtest.sqlite")),
+        scene: scene_rel,
     };
     let session = match Session::launch(&json, &root, options) {
         Ok(session) => session,

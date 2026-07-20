@@ -17,6 +17,11 @@
       "type": "Instance",
       "doc": "The Script instance this code runs as. `script.Parent` is the object containing this script."
     },
+    "Scene": {
+      "kind": "variable",
+      "type": "Scene",
+      "doc": "The current scene. Use `Scene:Load(path)` to switch scenes, `Scene:Reload()` to restart, and `Scene.Name` to read the current scene's name."
+    },
     "Input": {
       "kind": "variable",
       "type": "InputService",
@@ -198,6 +203,15 @@
   },
 
   "types": {
+    "Scene": {
+      "doc": "Scene management (the `Scene` global).",
+      "members": {
+        "Name": { "kind": "property", "type": "string", "doc": "The current scene's name (file name without extension)." },
+        "Path": { "kind": "property", "type": "string", "doc": "The current scene's project-relative path." },
+        "Load": { "kind": "method", "params": [{ "name": "path", "type": "string" }], "returns": "()", "doc": "Switch to the scene at `path` (project-relative), reloading into a fresh session." },
+        "Reload": { "kind": "method", "params": [], "returns": "()", "doc": "Reload the current scene from disk." }
+      }
+    },
     "Instance": {
       "doc": "Base class for every object in the scene tree.",
       "members": {

@@ -273,19 +273,39 @@ impl EditorApp {
         }
     }
 
+    fn playtest_backend(&self) -> DataBackend {
+        match (self.persist_playtest_data, self.playtest_db_path()) {
+            (true, Some(path)) => DataBackend::SqliteFile(path),
+            _ => DataBackend::SqliteMemory,
+        }
+    }
+
+    /// The current scene's path relative to the project root (its file name),
+    /// used as `Scene.Path` and for `Scene:Reload`.
+    fn scene_rel(&self) -> String {
+        self.path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    fn play_root(&self) -> PathBuf {
+        self.project_root()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default()
+    }
+
     fn start_play(&mut self) {
         self.editor.active = ActiveTab::Scene;
         let json = self.world.to_json();
-        let root = self
-            .project_root()
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_default();
-        let data = match (self.persist_playtest_data, self.playtest_db_path()) {
-            (true, Some(path)) => DataBackend::SqliteFile(path),
-            _ => DataBackend::SqliteMemory,
+        let root = self.play_root();
+        let options = SessionOptions {
+            data: self.playtest_backend(),
+            scene: self.scene_rel(),
         };
         self.logs.clear();
-        match Session::launch(&json, &root, SessionOptions { data }) {
+        match Session::launch(&json, &root, options) {
             Ok(session) => {
                 self.logs.extend(session.drain_logs());
                 self.ui.selection = None;
@@ -297,6 +317,38 @@ impl EditorApp {
                 };
             }
             Err(e) => self.ui.status = format!("Play failed: {e}"),
+        }
+    }
+
+    /// Switch the running session to another scene (from `Scene:Load`), loaded
+    /// from `rel` under the project root.
+    fn load_play_scene(&mut self, rel: &str) {
+        let root = self.play_root();
+        let json = match std::fs::read_to_string(root.join(rel)) {
+            Ok(j) => j,
+            Err(e) => {
+                self.logs.push(LogEntry {
+                    level: LogLevel::Error,
+                    message: format!("Scene:Load '{rel}': {e}"),
+                });
+                return;
+            }
+        };
+        let options = SessionOptions {
+            data: self.playtest_backend(),
+            scene: rel.to_string(),
+        };
+        match Session::launch(&json, &root, options) {
+            Ok(session) => {
+                self.logs.extend(session.drain_logs());
+                self.ui.selection = None;
+                self.play = Some(session);
+                self.ui.status = format!("Loaded scene {rel}");
+            }
+            Err(e) => self.logs.push(LogEntry {
+                level: LogLevel::Error,
+                message: format!("Scene:Load '{rel}': {e}"),
+            }),
         }
     }
 
@@ -1172,7 +1224,12 @@ impl EditorApp {
         };
         session.step(dt, &input);
         self.logs.extend(session.drain_logs());
+        // A `Scene:Load`/`Scene:Reload` from Luau swaps in a fresh session.
+        let scene_request = session.take_scene_request();
         ctx.request_repaint();
+        if let Some(rel) = scene_request {
+            self.load_play_scene(&rel);
+        }
     }
 }
 

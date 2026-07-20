@@ -58,7 +58,7 @@ fn check_no_errors(session: &Session, label: &str) {
 fn main() {
     let root = Path::new("projects/dino_run");
     let json = std::fs::read_to_string(root.join("main.scene.json")).expect("read scene");
-    let mut session = Session::launch(&json, root, SessionOptions { data: DataBackend::SqliteMemory })
+    let mut session = Session::launch(&json, root, SessionOptions { data: DataBackend::SqliteMemory, ..Default::default() })
         .expect("load scene");
     check_no_errors(&session, "load");
 
