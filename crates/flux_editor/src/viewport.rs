@@ -247,7 +247,9 @@ pub fn show(
         })
     };
 
-    if response.clicked() {
+    // Click-to-select only while editing. During a playtest, viewport clicks
+    // belong to the running game (select via the Explorer instead).
+    if !playing && response.clicked() {
         if let Some(p) = response.interact_pointer_pos() {
             state.selection = pick(p);
         }

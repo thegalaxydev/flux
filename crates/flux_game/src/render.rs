@@ -2,7 +2,7 @@
 //! Registered with `flux_view::register_overlay`, so the engine stays ignorant
 //! of the `Building` node type.
 
-use egui::{Painter, Pos2, Shape, Stroke};
+use egui::{Align2, Color32, FontId, Painter, Pos2, Shape, Stroke};
 
 use flux_core::{Color, InstanceId, Value, World};
 use flux_view::{RenderCtx, to_color};
@@ -68,7 +68,8 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
                 tc(col + w - 1, row + h - 1, 2), // bottom
                 tc(col, row + h - 1, 3),         // left
             ];
-            if !ctx.rect.intersects(screen_aabb(&quad)) {
+            let aabb = screen_aabb(&quad);
+            if !ctx.rect.intersects(aabb) {
                 continue;
             }
             let color = match world.get_prop(bid, "Color") {
@@ -86,6 +87,23 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
                 to_color(&color),
                 Stroke::new(1.5, to_color(&outline)),
             ));
+
+            // Label the building with its name, once it's big enough to read.
+            if aabb.height() > 22.0 {
+                if let Some(name) = world.name(bid).filter(|n| !n.is_empty()) {
+                    let size = (aabb.height() * 0.26).clamp(9.0, 15.0);
+                    let font = FontId::proportional(size);
+                    let c = aabb.center();
+                    painter.text(
+                        c + egui::vec2(1.0, 1.0),
+                        Align2::CENTER_CENTER,
+                        name,
+                        font.clone(),
+                        Color32::from_black_alpha(170),
+                    );
+                    painter.text(c, Align2::CENTER_CENTER, name, font, Color32::WHITE);
+                }
+            }
         }
     }
 }

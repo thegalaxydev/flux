@@ -60,7 +60,7 @@ fn wheel_zooms_in() {
     let mut session = Session::from_scene_json(&scene(true, 100.0), Path::new(".")).unwrap();
     let cam = camera_of(&session);
     for _ in 0..10 {
-        session.step(0.1, &frame(&[], 3.0));
+        session.step(0.1, &frame(&[], 120.0));
     }
     match read(&session, cam, "Zoom") {
         Value::Number(z) => assert!(z > 1.05, "zoom did not increase: {z}"),

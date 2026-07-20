@@ -95,7 +95,11 @@ pub fn update(world: &mut World, input: &CameraInput, dt: f64) {
         z_target = zoom; // lazily initialize if init() didn't run
     }
     if input.scroll != 0.0 {
-        z_target *= (1.0 + zoom_speed).powf(input.scroll);
+        // `scroll` is a raw pixel delta (~50/notch), not a notch count — convert
+        // to notches and clamp, so one wheel tick is one gentle zoom step rather
+        // than a jump straight to the limit.
+        let notches = (input.scroll / 50.0).clamp(-3.0, 3.0);
+        z_target *= (1.0 + zoom_speed).powf(notches);
     }
     z_target = z_target.clamp(min_zoom, max_zoom);
 
@@ -192,13 +196,14 @@ mod tests {
         let (mut w, cam) = setup(true);
         w.set_prop(cam, "MaxZoom", Value::Number(4.0)).unwrap();
         init(&mut w);
-        // A big scroll-in, stepped repeatedly, should approach MaxZoom, not blow past.
-        let inp = CameraInput { scroll: 10.0, ..input() };
+        // One wheel notch (~50px) is one gentle step, not a jump to the limit.
+        let inp = CameraInput { scroll: 150.0, ..input() }; // 3 notches (clamped)
         update(&mut w, &inp, 0.1);
         let after_one = num(&w, cam, "Zoom", 1.0);
         assert!(after_one > 1.0 && after_one <= 4.0);
-        for _ in 0..120 {
-            update(&mut w, &CameraInput { scroll: 0.0, ..input() }, 0.1);
+        // Keep scrolling in; zoom eases toward and clamps at MaxZoom, not past.
+        for _ in 0..60 {
+            update(&mut w, &CameraInput { scroll: 150.0, ..input() }, 0.1);
         }
         assert!((num(&w, cam, "Zoom", 1.0) - 4.0).abs() < 1e-2);
     }
@@ -232,7 +237,7 @@ mod tests {
         // Cursor off-centre: zooming should shift the offset to keep the world
         // point under the cursor fixed.
         let inp = CameraInput {
-            scroll: 3.0,
+            scroll: 100.0,
             mouse: Vec2::new(600.0, 300.0), // 200px right of centre
             ..input()
         };
