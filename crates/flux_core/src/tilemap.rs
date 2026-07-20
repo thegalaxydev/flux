@@ -444,6 +444,11 @@ impl TileGrid {
         self.cell(col, row).map(|c| c.tile)
     }
 
+    /// All cells, row-major — for saving.
+    pub fn cells(&self) -> &[Cell] {
+        &self.cells
+    }
+
     /// Overwrite the whole cell at `(col, row)`; returns `false` if out of bounds.
     pub fn set_cell(&mut self, col: i32, row: i32, cell: Cell) -> bool {
         match self.index(col, row) {
@@ -713,6 +718,40 @@ fn asset(world: &World, id: InstanceId, name: &str) -> String {
     }
 }
 
+/// A tilemap's grid-determining config: `(width, height, seed, tileset, worldgen)`.
+fn config(world: &World, id: InstanceId) -> (u32, u32, u64, String, String) {
+    (
+        num(world, id, "MapWidth").clamp(0.0, 4096.0) as u32,
+        num(world, id, "MapHeight").clamp(0.0, 4096.0) as u32,
+        num(world, id, "Seed") as i64 as u64,
+        asset(world, id, "TileSet"),
+        asset(world, id, "WorldGen"),
+    )
+}
+
+/// The signature `sync` expects for a tilemap's current config. A grid stamped
+/// with this value is considered up-to-date and won't be regenerated — used when
+/// [`restore`]ing a saved grid.
+pub fn current_signature(world: &World, id: InstanceId) -> u64 {
+    let (w, h, seed, ts, wg) = config(world, id);
+    signature(w, h, seed, &ts, &wg)
+}
+
+/// Install a saved grid for a tilemap, stamped with its current config signature
+/// so [`sync`] leaves it alone (used by save-load to restore runtime edits).
+pub fn restore(world: &mut World, id: InstanceId, width: u32, height: u32, cells: Vec<Cell>) {
+    let signature = current_signature(world, id);
+    world.set_tile_grid(
+        id,
+        TileGrid {
+            width,
+            height,
+            cells,
+            signature,
+        },
+    );
+}
+
 /// For every `Tilemap` in the workspace, (re)generate its [`TileGrid`] into the
 /// world's side-table when it's missing or its config changed. Cheap when
 /// nothing changed (a hash compare per tilemap), so it's safe to call each
@@ -724,21 +763,14 @@ pub fn sync(
     worldgens: &mut WorldGenCache,
     root: &Path,
 ) {
-    let maps: Vec<(InstanceId, u32, u32, u64, String, String)> = world
+    let maps: Vec<InstanceId> = world
         .descendants(world.workspace())
         .into_iter()
         .filter(|&id| world.class_name(id) == Some("Tilemap"))
-        .map(|id| {
-            let w = num(world, id, "MapWidth").clamp(0.0, 4096.0) as u32;
-            let h = num(world, id, "MapHeight").clamp(0.0, 4096.0) as u32;
-            let seed = num(world, id, "Seed") as i64 as u64;
-            let ts = asset(world, id, "TileSet");
-            let wg = asset(world, id, "WorldGen");
-            (id, w, h, seed, ts, wg)
-        })
         .collect();
 
-    for (id, w, h, seed, ts_path, wg_path) in maps {
+    for id in maps {
+        let (w, h, seed, ts_path, wg_path) = config(world, id);
         let sig = signature(w, h, seed, &ts_path, &wg_path);
         let stale = world.tile_grid(id).map(|g| g.signature != sig).unwrap_or(true);
         if stale {

@@ -137,6 +137,15 @@ declare class DataStoreService
 	function GetDataStore(self, name: string, scope: string?): DataStore
 end
 
+-- Save slots (game:GetService("SaveService"))
+declare class SaveService
+	function Save(self, name: string): ()
+	function Load(self, name: string): ()
+	function Exists(self, name: string): boolean
+	function Delete(self, name: string): boolean
+	function List(self): {string}
+end
+
 -- ---------------------------------------------------------------------------
 -- Instances
 -- ---------------------------------------------------------------------------
@@ -153,6 +162,7 @@ declare class Instance
 	AbsolutePosition: Vec2
 	AbsoluteSize: Vec2
 	function GetService(self, service: "DataStoreService"): DataStoreService
+	function GetService(self, service: "SaveService"): SaveService
 	function GetService(self, service: string): Instance
 	function FindFirstChild(self, name: string): Instance?
 	function GetChildren(self): {Instance}

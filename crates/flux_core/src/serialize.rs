@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::class::registry;
 use crate::error::CoreError;
+use crate::tilemap::{self, Cell};
 use crate::value::{Color, Rect, UDim2, Value};
 use crate::world::{InstanceId, World};
 
@@ -24,8 +25,51 @@ struct SavedInstance {
     ref_id: Option<u64>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     props: IndexMap<String, SavedValue>,
+    /// A `Tilemap`'s runtime grid — only written by save-games (not scene files),
+    /// so runtime edits (mining, terraforming) survive a reload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tiles: Option<SavedTiles>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     children: Vec<SavedInstance>,
+}
+
+/// A tile grid as run-length-encoded cells, keeping big maps compact.
+#[derive(Serialize, Deserialize)]
+struct SavedTiles {
+    w: u32,
+    h: u32,
+    /// Runs of `[count, tile, ore, ore_amount]`, row-major.
+    runs: Vec<[u32; 4]>,
+}
+
+fn rle_encode(cells: &[Cell]) -> Vec<[u32; 4]> {
+    let mut runs: Vec<[u32; 4]> = Vec::new();
+    for c in cells {
+        if let Some(last) = runs.last_mut() {
+            if last[1] == c.tile as u32 && last[2] == c.ore as u32 && last[3] == c.ore_amount as u32
+            {
+                last[0] += 1;
+                continue;
+            }
+        }
+        runs.push([1, c.tile as u32, c.ore as u32, c.ore_amount as u32]);
+    }
+    runs
+}
+
+fn rle_decode(t: &SavedTiles) -> Vec<Cell> {
+    let mut cells = Vec::with_capacity((t.w as usize) * (t.h as usize));
+    for r in &t.runs {
+        let cell = Cell {
+            tile: r[1] as u16,
+            ore: r[2] as u16,
+            ore_amount: r[3] as u16,
+        };
+        for _ in 0..r[0] {
+            cells.push(cell);
+        }
+    }
+    cells
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,7 +89,19 @@ enum SavedValue {
 }
 
 impl World {
+    /// Serialize the scene tree (no derived tilemap grids — those regenerate).
     pub fn to_json(&self) -> String {
+        self.to_json_impl(false)
+    }
+
+    /// Serialize for a save game: the tree plus each `Tilemap`'s runtime grid, so
+    /// runtime edits (mined ore, terraforming) and placed buildings all persist.
+    /// Loads back through [`World::from_json`] like any scene.
+    pub fn to_save_string(&self) -> String {
+        self.to_json_impl(true)
+    }
+
+    fn to_json_impl(&self, include_tiles: bool) -> String {
         let mut ref_ids: HashMap<InstanceId, u64> = HashMap::new();
         let mut next = 0u64;
         for id in self.descendants(self.root()) {
@@ -60,7 +116,7 @@ impl World {
         }
         let scene = SceneFile {
             version: SCENE_VERSION,
-            root: save_instance(self, self.root(), &ref_ids),
+            root: save_instance(self, self.root(), &ref_ids, include_tiles),
         };
         serde_json::to_string_pretty(&scene).unwrap()
     }
@@ -80,14 +136,21 @@ impl World {
         let mut world = World::empty_game();
         let mut refs: HashMap<u64, InstanceId> = HashMap::new();
         let mut fixups: Vec<(InstanceId, &'static str, u64)> = Vec::new();
+        let mut tiles: Vec<(InstanceId, SavedTiles)> = Vec::new();
         let root = world.root();
-        load_instance(&mut world, &scene.root, root, &mut refs, &mut fixups)?;
+        load_instance(&mut world, &scene.root, root, &mut refs, &mut fixups, &mut tiles)?;
         for (id, prop, serial) in fixups {
             let target = refs
                 .get(&serial)
                 .copied()
                 .ok_or_else(|| CoreError::Load(format!("dangling instance ref {serial}")))?;
             world.set_prop(id, prop, Value::InstanceRef(Some(target)))?;
+        }
+        // Restore saved tilemap grids (save games) now that props are set, so the
+        // signature matches and `sync` won't regenerate over them.
+        for (id, t) in tiles {
+            let cells = rle_decode(&t);
+            tilemap::restore(&mut world, id, t.w, t.h, cells);
         }
         // Convert legacy Sprite + AnimationPlayer pairs to AnimatedSprite.
         migrate_legacy_animation(&mut world);
@@ -101,6 +164,7 @@ fn save_instance(
     world: &World,
     id: InstanceId,
     ref_ids: &HashMap<InstanceId, u64>,
+    include_tiles: bool,
 ) -> SavedInstance {
     let info = registry().info(world.class_of(id).unwrap());
     let mut props = IndexMap::new();
@@ -114,15 +178,25 @@ fn save_instance(
             props.insert(pd.name.to_string(), save_value(value, ref_ids));
         }
     }
+    let tiles = if include_tiles && info.name == "Tilemap" {
+        world.tile_grid(id).map(|g| SavedTiles {
+            w: g.width(),
+            h: g.height(),
+            runs: rle_encode(g.cells()),
+        })
+    } else {
+        None
+    };
     SavedInstance {
         class: info.name.to_string(),
         name: world.name(id).unwrap().to_string(),
         ref_id: ref_ids.get(&id).copied(),
         props,
+        tiles,
         children: world
             .children(id)
             .iter()
-            .map(|&c| save_instance(world, c, ref_ids))
+            .map(|&c| save_instance(world, c, ref_ids, include_tiles))
             .collect(),
     }
 }
@@ -147,6 +221,7 @@ fn load_instance(
     id: InstanceId,
     refs: &mut HashMap<u64, InstanceId>,
     fixups: &mut Vec<(InstanceId, &'static str, u64)>,
+    tiles: &mut Vec<(InstanceId, SavedTiles)>,
 ) -> Result<(), CoreError> {
     world.set_name_raw(id, saved.name.clone());
     if let Some(r) = saved.ref_id {
@@ -163,12 +238,15 @@ fn load_instance(
             _ => world.set_prop(id, pd.name, load_value(sv))?,
         }
     }
+    if let Some(t) = &saved.tiles {
+        tiles.push((id, SavedTiles { w: t.w, h: t.h, runs: t.runs.clone() }));
+    }
     for child in &saved.children {
         let cclass = registry()
             .find(resolve_legacy_class(&child.class))
             .ok_or_else(|| CoreError::UnknownClass(child.class.clone()))?;
         let cid = world.spawn_raw(cclass, id);
-        load_instance(world, child, cid, refs, fixups)?;
+        load_instance(world, child, cid, refs, fixups, tiles)?;
     }
     Ok(())
 }
@@ -257,6 +335,70 @@ fn migrate_legacy_animation(world: &mut World) {
             let _ = world.reparent_at(kid, anim, i);
         }
         let _ = world.destroy(sprite);
+    }
+}
+
+#[cfg(test)]
+mod save_tests {
+    use crate::tilemap::{self, TileSetCache, WorldGenCache};
+    use crate::value::Value;
+    use crate::world::World;
+    use glam::Vec2;
+    use std::path::Path;
+
+    fn tilemap_of(w: &World) -> crate::world::InstanceId {
+        w.descendants(w.workspace())
+            .into_iter()
+            .find(|&id| w.class_name(id) == Some("Tilemap"))
+            .unwrap()
+    }
+
+    #[test]
+    fn save_round_trips_tiles_and_buildings_but_scene_json_omits_tiles() {
+        let mut w = World::new();
+        let tm = w.create("Tilemap", w.workspace()).unwrap();
+        w.set_prop(tm, "MapWidth", Value::Number(8.0)).unwrap();
+        w.set_prop(tm, "MapHeight", Value::Number(8.0)).unwrap();
+        let (mut ts, mut wg) = (TileSetCache::default(), WorldGenCache::default());
+        tilemap::sync(&mut w, &mut ts, &mut wg, Path::new("."));
+
+        // Runtime edits to the grid.
+        w.tile_grid_mut(tm).unwrap().set_tile(0, 0, 5);
+        w.tile_grid_mut(tm).unwrap().set_ore(1, 1, 3, 250);
+        // A placed building.
+        let b = w.create("Building", tm).unwrap();
+        w.set_prop(b, "Type", Value::String("smelter".into())).unwrap();
+        w.set_prop(b, "Cell", Value::Vec2(Vec2::new(2.0, 2.0))).unwrap();
+
+        // Scene JSON stays lean; the save carries the grid.
+        assert!(!w.to_json().contains("\"tiles\""));
+        let save = w.to_save_string();
+        assert!(save.contains("\"tiles\""));
+
+        let mut w2 = World::from_json(&save).unwrap();
+        let tm2 = tilemap_of(&w2);
+        {
+            let g = w2.tile_grid(tm2).expect("grid restored from save");
+            assert_eq!(g.get(0, 0), Some(5));
+            assert_eq!(g.cell(1, 1).unwrap().ore_amount, 250);
+        }
+        let building = w2
+            .descendants(tm2)
+            .into_iter()
+            .find(|&id| w2.class_name(id) == Some("Building"))
+            .expect("building restored");
+        assert_eq!(
+            w2.get_prop(building, "Type"),
+            Some(&Value::String("smelter".into()))
+        );
+
+        // A fresh sync must NOT wipe the restored grid (signature matches config).
+        tilemap::sync(&mut w2, &mut ts, &mut wg, Path::new("."));
+        assert_eq!(
+            w2.tile_grid(tm2).unwrap().get(0, 0),
+            Some(5),
+            "sync clobbered a restored save"
+        );
     }
 }
 

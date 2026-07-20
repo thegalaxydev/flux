@@ -129,6 +129,45 @@ fn building_scene(script_path: &str) -> String {
 }
 
 #[test]
+fn lua_save_service_persists_and_reloads_world() {
+    let root = fixtures();
+    let saves = root.join(".flux/saves");
+    let _ = std::fs::remove_dir_all(&saves); // deterministic slate
+
+    let json = building_scene("scripts/test_save.luau");
+    let session = Session::from_scene_json(&json, root).expect("scene loads");
+    let logs: Vec<String> = session
+        .drain_logs()
+        .into_iter()
+        .filter(|l| l.level == LogLevel::Info)
+        .map(|l| l.message)
+        .collect();
+    assert!(logs.iter().any(|m| m == "exists true"), "Save/Exists: {logs:?}");
+    assert!(logs.iter().any(|m| m == "listed true"), "List: {logs:?}");
+
+    // SaveService:Load requested a swap to the slot file (like Scene:Load).
+    assert_eq!(
+        session.take_scene_request().as_deref(),
+        Some(".flux/saves/slot1.save.json")
+    );
+
+    // Reload the saved world independently and confirm the persisted state.
+    let saved = std::fs::read_to_string(saves.join("slot1.save.json")).unwrap();
+    let reloaded = Session::from_scene_json(&saved, root).expect("save loads");
+    let world = reloaded.world();
+    let w = world.borrow();
+    let map = w.find_first_child(w.workspace(), "Map").unwrap();
+    assert_eq!(w.tile_grid(map).unwrap().get(0, 0), Some(2)); // "stone"
+    let building = w
+        .descendants(map)
+        .into_iter()
+        .find(|&id| w.class_name(id) == Some("Building"));
+    assert!(building.is_some(), "placed building persisted");
+
+    let _ = std::fs::remove_dir_all(&saves);
+}
+
+#[test]
 fn lua_building_placement_and_camera_conversion() {
     let json = building_scene("scripts/test_buildings.luau");
     let session = Session::from_scene_json(&json, fixtures()).expect("scene loads");

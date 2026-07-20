@@ -198,6 +198,7 @@
     "Scripts": "Instance",
     "Gui": "Instance",
     "DataStoreService": "DataStoreService",
+    "SaveService": "SaveService",
     "Players": "Players",
     "RunService": "RunService"
   },
@@ -365,6 +366,16 @@
       "doc": "Persistent key/value storage service. Get it with game:GetService(\"DataStoreService\").",
       "members": {
         "GetDataStore": { "kind": "method", "params": [{ "name": "name", "type": "string" }, { "name": "scope", "type": "string?" }], "returns": "DataStore", "doc": "Returns a named DataStore for reading and writing values." }
+      }
+    },
+    "SaveService": {
+      "doc": "Named save slots for the running game. Get it with game:GetService(\"SaveService\").",
+      "members": {
+        "Save": { "kind": "method", "params": [{ "name": "name", "type": "string" }], "returns": "()", "doc": "Write the whole world (tree, buildings, modified tilemaps) to save slot `name`." },
+        "Load": { "kind": "method", "params": [{ "name": "name", "type": "string" }], "returns": "()", "doc": "Reload the game from save slot `name` (swaps in the saved world, like Scene:Load)." },
+        "Exists": { "kind": "method", "params": [{ "name": "name", "type": "string" }], "returns": "boolean", "doc": "Whether a save slot named `name` exists." },
+        "Delete": { "kind": "method", "params": [{ "name": "name", "type": "string" }], "returns": "boolean", "doc": "Delete save slot `name`. Returns whether it existed." },
+        "List": { "kind": "method", "params": [], "returns": "{string}", "doc": "Returns the names of all save slots." }
       }
     },
     "DataStore": {

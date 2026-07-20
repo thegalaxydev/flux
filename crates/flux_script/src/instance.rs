@@ -177,6 +177,9 @@ impl UserData for LuaInstance {
                     .clone();
                 return crate::datastore::LuaDataStoreService { provider }.into_lua(lua);
             }
+            if name == "SaveService" {
+                return crate::save::LuaSaveService.into_lua(lua);
+            }
             match w.service(&name) {
                 Some(id) => LuaInstance(id).into_lua(lua),
                 None => Err(mlua::Error::RuntimeError(format!(

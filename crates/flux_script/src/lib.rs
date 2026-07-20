@@ -1,6 +1,7 @@
 mod datastore;
 mod enums;
 mod instance;
+mod save;
 mod scheduler;
 mod signal;
 mod types;
@@ -147,6 +148,14 @@ pub(crate) fn building_cache_handle(lua: &Lua) -> BuildingCacheHandle {
         .clone()
 }
 
+/// The scene-switch state, so `SaveService:Load` can request a world swap the
+/// same way `Scene:Load` does.
+pub(crate) fn scene_handle(lua: &Lua) -> SceneHandle {
+    lua.app_data_ref::<SceneHandle>()
+        .expect("scene app data missing")
+        .clone()
+}
+
 pub struct ScriptHost {
     lua: Lua,
     world: WorldHandle,
@@ -200,6 +209,7 @@ impl ScriptHost {
         lua.set_app_data(tile_cache.clone());
         let building_cache: BuildingCacheHandle = Rc::new(RefCell::new(Default::default()));
         lua.set_app_data(building_cache);
+        lua.set_app_data(scene.clone());
 
         setup_globals(&lua, &world, &scheduler, &log).map_err(|e| e.to_string())?;
         lua.globals()
