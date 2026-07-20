@@ -93,6 +93,7 @@ pub(crate) fn install() {
                 entry.set("id", def.id.clone())?;
                 entry.set("name", def.name.clone())?;
                 entry.set("category", def.category.clone())?;
+                entry.set("cost", def.cost)?;
                 list.push(entry)?;
             }
         }

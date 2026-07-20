@@ -84,6 +84,9 @@ fn install_classes() {
             asset_prop("Recipes", AssetType::Custom("recipes")),
             prop_t("_PowerProduced", Value::Number(0.0)),
             prop_t("_PowerConsumed", Value::Number(0.0)),
+            // Player's money for this map's economy (persisted in saves). The
+            // engine ignores it; the game reads/writes it and charges for builds.
+            prop("Money", Value::Number(200.0)),
         ],
     );
     flux_core::install(reg);

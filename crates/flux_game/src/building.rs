@@ -50,6 +50,9 @@ pub struct BuildingDoc {
     pub stores: bool,
     #[serde(default)]
     pub power_use: f32,
+    /// Money cost to place this building (enforced by the game, not the engine).
+    #[serde(default)]
+    pub cost: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reactor: Option<ReactorDoc>,
 }
@@ -132,6 +135,7 @@ pub struct BuildingDef {
     pub capacity: u32,
     pub stores: bool,
     pub power_use: f32,
+    pub cost: f32,
     pub reactor: Option<ReactorParams>,
 }
 
@@ -178,6 +182,7 @@ impl BuildingCatalog {
                     capacity: b.capacity,
                     stores: b.stores,
                     power_use: b.power_use.max(0.0),
+                    cost: b.cost.max(0.0),
                     reactor: b.reactor.as_ref().map(|r| ReactorParams {
                         power: r.power.max(0.0),
                         heat: r.heat.max(0.0),
