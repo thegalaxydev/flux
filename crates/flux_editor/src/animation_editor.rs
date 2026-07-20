@@ -130,7 +130,10 @@ impl AnimationEditor {
             ui.set_min_width(150.0);
             ui.set_max_width(170.0);
             ui.strong("Clips");
-            egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("clip_list")
+                .max_height(300.0)
+                .show(ui, |ui| {
                 let names: Vec<String> = self.doc.clips.keys().cloned().collect();
                 for name in names {
                     let selected = self.selected_clip.as_deref() == Some(name.as_str());
@@ -300,7 +303,10 @@ impl AnimationEditor {
         };
 
         let total: f32 = frames.iter().map(|f| f.duration.max(1e-4)).sum();
-        egui::ScrollArea::horizontal().max_height(96.0).show(ui, |ui| {
+        egui::ScrollArea::horizontal()
+            .id_salt("timeline")
+            .max_height(96.0)
+            .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let h = 72.0;
                 for (i, frame) in frames.iter().enumerate() {
