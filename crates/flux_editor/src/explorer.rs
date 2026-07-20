@@ -603,6 +603,7 @@ fn drop_asset(state: &mut UiState, target: InstanceId, rel: &str) {
     let file = rel.rsplit(['/', '\\']).next().unwrap_or(rel);
     let (class, prop) = match classify(file, false) {
         AssetKind::Image => ("Sprite", "Texture"),
+        AssetKind::Animation => ("AnimatedSprite", "Frames"),
         AssetKind::LuaModule => ("Module", "SourcePath"),
         AssetKind::LuaScript | AssetKind::Script => ("Script", "SourcePath"),
         _ => return,

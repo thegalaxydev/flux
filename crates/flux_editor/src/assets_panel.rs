@@ -197,6 +197,13 @@ fn row(
                 }
                 ui.close();
             }
+            if ui.button("Create Sprite Frames").clicked() {
+                match create_sprite_frames(root, rel) {
+                    Ok(lib) => state.open_animation = Some(lib),
+                    Err(e) => state.status = format!("Create failed: {e}"),
+                }
+                ui.close();
+            }
         });
     } else if kind == AssetKind::Animation {
         resp.on_hover_text("Double-click to open in the Animation Editor");
@@ -226,6 +233,38 @@ fn create_frames_library(root: &Path, dir: &Path) -> std::io::Result<String> {
     };
     std::fs::write(&full, STARTER_FRAMES)?;
     Ok(join_rel(dir, &name))
+}
+
+/// Create a `.spriteframes` library next to `texture_rel` with that texture
+/// pre-linked and one empty clip, returning its project-relative path. This is
+/// the "Create Sprite Frames" action: the texture is the source of truth, so
+/// the user never links it separately.
+fn create_sprite_frames(root: &Path, texture_rel: &str) -> std::io::Result<String> {
+    let (dir, file) = match texture_rel.rsplit_once('/') {
+        Some((d, f)) => (format!("{d}/"), f),
+        None => (String::new(), texture_rel),
+    };
+    let stem = file.rsplit_once('.').map(|(s, _)| s).unwrap_or(file);
+    let (rel, full) = {
+        let mut n = 0;
+        loop {
+            let rel = if n == 0 {
+                format!("{dir}{stem}.spriteframes")
+            } else {
+                format!("{dir}{stem}_{n}.spriteframes")
+            };
+            let full = root.join(&rel);
+            if !full.exists() {
+                break (rel, full);
+            }
+            n += 1;
+        }
+    };
+    let content = format!(
+        "{{\n  \"texture\": \"{texture_rel}\",\n  \"clips\": {{\n    \"New\": {{ \"loop\": true, \"frames\": [] }}\n  }}\n}}\n"
+    );
+    std::fs::write(&full, content)?;
+    Ok(rel)
 }
 
 /// Build a project-root-relative path (forward-slashed) for `dir/name`, where
@@ -287,5 +326,27 @@ mod tests {
         assert_eq!(display_name("Util.Module.LUAU", AssetKind::LuaModule), "Util");
         // Non-script files keep their full name.
         assert_eq!(display_name("hero.png", AssetKind::Image), "hero.png");
+    }
+
+    #[test]
+    fn create_sprite_frames_links_texture_and_stays_unique() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("flux_csf_{nanos}"));
+        std::fs::create_dir_all(root.join("sprites")).unwrap();
+
+        let rel = super::create_sprite_frames(&root, "sprites/hero.png").unwrap();
+        assert_eq!(rel, "sprites/hero.spriteframes");
+        let content = std::fs::read_to_string(root.join(&rel)).unwrap();
+        assert!(content.contains("\"texture\": \"sprites/hero.png\""), "texture linked");
+        assert!(content.contains("\"New\""), "starter clip present");
+
+        // A second call must not clobber the first.
+        let rel2 = super::create_sprite_frames(&root, "sprites/hero.png").unwrap();
+        assert_eq!(rel2, "sprites/hero_1.spriteframes");
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

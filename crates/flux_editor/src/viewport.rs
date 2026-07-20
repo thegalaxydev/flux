@@ -122,6 +122,17 @@ fn to_glam(p: egui::Pos2) -> glam::Vec2 {
     glam::vec2(p.x, p.y)
 }
 
+/// The node class + asset property to spawn for a dropped asset, if it maps to a
+/// visual node (a texture → Sprite, a clip library → AnimatedSprite).
+fn node_for_asset(rel: &str) -> Option<(&'static str, &'static str)> {
+    let file = rel.rsplit(['/', '\\']).next().unwrap_or(rel);
+    match flux_render::classify(file, false) {
+        flux_render::AssetKind::Image => Some(("Sprite", "Texture")),
+        flux_render::AssetKind::Animation => Some(("AnimatedSprite", "Frames")),
+        _ => None,
+    }
+}
+
 fn screen_rect(rect: egui::Rect) -> Rect2 {
     Rect2::new(
         glam::vec2(rect.min.x, rect.min.y),
@@ -373,17 +384,35 @@ pub fn show(
 
     if let Some(payload) = response.dnd_release_payload::<AssetDrag>() {
         if let Some(pos) = response.hover_pos() {
-            if let Some(id) = pick(pos) {
-                if world.get_prop(id, "Texture").is_some() {
-                    let old = world
-                        .get_prop(id, "Texture")
-                        .cloned()
-                        .unwrap_or(Value::Asset(String::new()));
+            let rel = &payload.0;
+            // Dropped onto a textured node: re-texture it in place.
+            let retexture = pick(pos).filter(|&id| world.get_prop(id, "Texture").is_some());
+            if let Some(id) = retexture {
+                let old = world
+                    .get_prop(id, "Texture")
+                    .cloned()
+                    .unwrap_or(Value::Asset(String::new()));
+                state.queue.push(Pending {
+                    cmd: Command::set_prop(id, "Texture", old, Value::Asset(rel.clone())),
+                    merge: false,
+                });
+                state.selection = Some(id);
+            } else if !playing {
+                // Dropped on empty space: spawn a visual node at the drop point —
+                // a Sprite for a texture, an AnimatedSprite for a clip library.
+                if let Some((class, prop)) = node_for_asset(rel) {
+                    let wp = to_world(pos);
                     state.queue.push(Pending {
-                        cmd: Command::set_prop(id, "Texture", old, Value::Asset(payload.0.clone())),
+                        cmd: Command::create_with(
+                            class,
+                            world.workspace(),
+                            vec![
+                                (prop, Value::Asset(rel.clone())),
+                                ("Position", Value::Vec2(wp)),
+                            ],
+                        ),
                         merge: false,
                     });
-                    state.selection = Some(id);
                 }
             }
         }
@@ -955,6 +984,19 @@ fn apply_resize(start: Rect2, handle: Handle, delta: glam::Vec2, shift: bool, al
 #[cfg(test)]
 mod snap_tests {
     use super::*;
+
+    #[test]
+    fn node_for_asset_maps_visual_assets() {
+        assert_eq!(node_for_asset("art/hero.png"), Some(("Sprite", "Texture")));
+        assert_eq!(
+            node_for_asset("anim/hero.spriteframes"),
+            Some(("AnimatedSprite", "Frames"))
+        );
+        assert_eq!(node_for_asset("old/hero.frames.json"), Some(("AnimatedSprite", "Frames")));
+        // Non-visual assets don't spawn a node on a viewport drop.
+        assert_eq!(node_for_asset("scripts/main.luau"), None);
+        assert_eq!(node_for_asset("sfx/jump.wav"), None);
+    }
 
     fn r(x: f32, y: f32, w: f32, h: f32) -> Rect2 {
         Rect2::new(glam::vec2(x, y), glam::vec2(w, h))
