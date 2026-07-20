@@ -1240,7 +1240,7 @@ impl EditorApp {
         } else {
             ctx.input(|i| i.keys_down.iter().map(|k| format!("{k:?}")).collect())
         };
-        let (mouse_pos, mouse_buttons) = ctx.input(|i| {
+        let (mouse_pos, mouse_buttons, scroll, over) = ctx.input(|i| {
             let pos = i.pointer.latest_pos();
             let over = pos.is_some_and(|p| vp.contains(p));
             let mut buttons = HashSet::new();
@@ -1251,15 +1251,21 @@ impl EditorApp {
                 if i.pointer.secondary_down() {
                     buttons.insert("Right".to_string());
                 }
+                if i.pointer.middle_down() {
+                    buttons.insert("Middle".to_string());
+                }
             }
             let rel = pos.map(|p| p - vp.min).unwrap_or_default();
-            (glam::Vec2::new(rel.x, rel.y), buttons)
+            let scroll = if over { i.raw_scroll_delta.y } else { 0.0 };
+            (glam::Vec2::new(rel.x, rel.y), buttons, scroll, over)
         });
         let input = InputFrame {
             keys,
             mouse_pos,
             mouse_buttons,
             viewport: glam::Vec2::new(vp.width(), vp.height()),
+            scroll,
+            pointer_over: over,
         };
         session.step(dt, &input);
         self.logs.extend(session.drain_logs());

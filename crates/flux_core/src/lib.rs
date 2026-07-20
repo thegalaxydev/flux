@@ -1,4 +1,5 @@
 pub mod animation;
+pub mod camera;
 mod class;
 mod error;
 pub mod gui;

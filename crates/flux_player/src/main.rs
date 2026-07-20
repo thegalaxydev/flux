@@ -88,6 +88,9 @@ fn collect_input(ctx: &egui::Context, rect: egui::Rect) -> InputFrame {
             if i.pointer.secondary_down() {
                 mouse_buttons.insert("Right".to_string());
             }
+            if i.pointer.middle_down() {
+                mouse_buttons.insert("Middle".to_string());
+            }
         }
         let rel = pos.map(|p| p - rect.min).unwrap_or_default();
         InputFrame {
@@ -95,6 +98,8 @@ fn collect_input(ctx: &egui::Context, rect: egui::Rect) -> InputFrame {
             mouse_pos: glam::Vec2::new(rel.x, rel.y),
             mouse_buttons,
             viewport: glam::Vec2::new(rect.width(), rect.height()),
+            scroll: if over { i.raw_scroll_delta.y } else { 0.0 },
+            pointer_over: over,
         }
     })
 }

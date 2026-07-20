@@ -63,6 +63,10 @@ pub struct InputFrame {
     pub mouse_pos: Vec2,
     pub mouse_buttons: HashSet<String>,
     pub viewport: Vec2,
+    /// Mouse-wheel delta this frame (+ scrolls up / zooms in).
+    pub scroll: f32,
+    /// Whether the cursor is inside the game viewport.
+    pub pointer_over: bool,
 }
 
 #[derive(Default)]
@@ -71,6 +75,28 @@ pub struct InputState {
     pub mouse_pos: Vec2,
     pub mouse_buttons: HashSet<String>,
     pub viewport: Vec2,
+    pub scroll: f32,
+    pub pointer_over: bool,
+}
+
+/// Keyboard pan axis (WASD + arrows) for the camera controller. `+Y` is down,
+/// matching world space, so W/Up moves the view up.
+fn pan_axis(keys: &HashSet<String>) -> Vec2 {
+    let held = |k: &str| keys.contains(k);
+    let mut v = Vec2::ZERO;
+    if held("A") || held("ArrowLeft") {
+        v.x -= 1.0;
+    }
+    if held("D") || held("ArrowRight") {
+        v.x += 1.0;
+    }
+    if held("W") || held("ArrowUp") {
+        v.y -= 1.0;
+    }
+    if held("S") || held("ArrowDown") {
+        v.y += 1.0;
+    }
+    v
 }
 
 pub(crate) type WorldHandle = Rc<RefCell<World>>;
@@ -127,6 +153,8 @@ pub struct ScriptHost {
     scene: SceneHandle,
     root: PathBuf,
     prev_left: bool,
+    prev_middle: bool,
+    prev_mouse: Vec2,
     log: Log,
 }
 
@@ -168,6 +196,8 @@ impl ScriptHost {
             .map_err(|e| e.to_string())?;
         // Reset AnimatedSprites and kick off any AutoPlay animation before scripts run.
         flux_core::animation::init(&mut world.borrow_mut());
+        // Seed the camera controller's smooth-zoom target from the authored Zoom.
+        flux_core::camera::init(&mut world.borrow_mut());
         // Generate tilemap grids so scripts see a populated world from frame one.
         let mut worldgen_cache = flux_core::tilemap::WorldGenCache::default();
         flux_core::tilemap::sync(
@@ -190,6 +220,8 @@ impl ScriptHost {
             scene,
             root: script_root.to_path_buf(),
             prev_left: false,
+            prev_middle: false,
+            prev_mouse: Vec2::ZERO,
             log,
         };
         host.start_scripts(script_root);
@@ -211,6 +243,30 @@ impl ScriptHost {
             state.mouse_pos = input.mouse_pos;
             state.mouse_buttons = input.mouse_buttons.clone();
             state.viewport = input.viewport;
+            state.scroll = input.scroll;
+            state.pointer_over = input.pointer_over;
+        }
+        // Drive the built-in camera controller (no-op unless the camera opts in)
+        // before scripts run, so a script reading Camera.Position sees this
+        // frame's movement. Middle-drag delta needs the previous cursor position.
+        {
+            let middle = input.mouse_buttons.contains("Middle");
+            let drag = if middle && self.prev_middle {
+                input.mouse_pos - self.prev_mouse
+            } else {
+                Vec2::ZERO
+            };
+            self.prev_middle = middle;
+            self.prev_mouse = input.mouse_pos;
+            let cam_input = flux_core::camera::CameraInput {
+                pan: pan_axis(&input.keys),
+                scroll: input.scroll,
+                drag,
+                mouse: input.mouse_pos,
+                viewport: input.viewport,
+                pointer_over: input.pointer_over,
+            };
+            flux_core::camera::update(&mut self.world.borrow_mut(), &cam_input, dt);
         }
         scheduler::step(&self.lua, &self.scheduler, &self.log, dt);
         signal::fire(&self.lua, &self.scheduler, &self.log, &self.heartbeat, dt);

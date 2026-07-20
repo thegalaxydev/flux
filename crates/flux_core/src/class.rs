@@ -241,6 +241,9 @@ impl ClassRegistry {
                 prop("Seed", Value::Number(0.0)),
             ],
         );
+        // The 2D camera. `Position`/`Zoom` are the live view; the rest configure
+        // the optional built-in controller (see `crate::camera`) — all off by
+        // default, so a scripted or static camera is unaffected.
         reg.add(
             "Camera2D",
             Some("Instance"),
@@ -249,6 +252,18 @@ impl ClassRegistry {
             vec![
                 prop("Position", Value::Vec2(Vec2::ZERO)),
                 prop("Zoom", Value::Number(1.0)),
+                // Built-in pan/zoom controller config.
+                prop("Controls", Value::Bool(false)),
+                prop("PanSpeed", Value::Number(800.0)),
+                prop("ZoomSpeed", Value::Number(0.15)),
+                prop("MinZoom", Value::Number(0.1)),
+                prop("MaxZoom", Value::Number(8.0)),
+                prop("EdgeScroll", Value::Bool(false)),
+                // Position clamp; an empty/zero range on an axis means unbounded.
+                prop("BoundsMin", Value::Vec2(Vec2::ZERO)),
+                prop("BoundsMax", Value::Vec2(Vec2::ZERO)),
+                // Transient smooth-zoom target — never serialized.
+                prop_t("_ZoomTarget", Value::Number(0.0)),
             ],
         );
         reg.add(
