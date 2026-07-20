@@ -275,22 +275,27 @@ fn join_rel(dir: &Path, name: &str) -> String {
     parts.join("/")
 }
 
-/// Display name for a file: scripts and modules are shown without their
-/// extension (`test.module.luau` -> `test`, `main.luau` -> `main`); everything
-/// else keeps its full name. The icon already conveys the kind.
+/// Display name for a file: recognized assets drop their extension since the
+/// icon already conveys the kind (`hero.spriteframes` -> `hero`,
+/// `main.scene.json` -> `main`, `hero_sheet.png` -> `hero_sheet`). Compound
+/// extensions strip whole; otherwise a single trailing extension is removed.
+/// Folders and unrecognized files keep their full name.
 fn display_name(name: &str, kind: AssetKind) -> String {
+    if matches!(kind, AssetKind::Folder | AssetKind::Unknown) {
+        return name.to_string();
+    }
+    // Multi-part extensions the single-dot rule below wouldn't fully strip.
+    const COMPOUND: &[&str] = &[".module.luau", ".module.lua", ".scene.json", ".frames.json"];
     let lower = name.to_ascii_lowercase();
-    let suffixes: &[&str] = match kind {
-        AssetKind::LuaModule => &[".module.luau", ".module.lua"],
-        AssetKind::LuaScript => &[".luau", ".lua"],
-        _ => return name.to_string(),
-    };
-    for suffix in suffixes {
+    for suffix in COMPOUND {
         if lower.ends_with(suffix) {
             return name[..name.len() - suffix.len()].to_string();
         }
     }
-    name.to_string()
+    match name.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem.to_string(),
+        _ => name.to_string(),
+    }
 }
 
 fn kind_icon(kind: AssetKind) -> Icon {
@@ -319,13 +324,23 @@ mod tests {
     use flux_render::AssetKind;
 
     #[test]
-    fn strips_script_and_module_extensions() {
+    fn strips_recognized_extensions_for_display() {
+        // Scripts and modules (compound extensions).
         assert_eq!(display_name("main.luau", AssetKind::LuaScript), "main");
         assert_eq!(display_name("main.lua", AssetKind::LuaScript), "main");
         assert_eq!(display_name("test.module.luau", AssetKind::LuaModule), "test");
         assert_eq!(display_name("Util.Module.LUAU", AssetKind::LuaModule), "Util");
-        // Non-script files keep their full name.
-        assert_eq!(display_name("hero.png", AssetKind::Image), "hero.png");
+        // Other recognized assets drop their extension too.
+        assert_eq!(display_name("hero.png", AssetKind::Image), "hero");
+        assert_eq!(display_name("hero_sheet.png", AssetKind::Image), "hero_sheet");
+        assert_eq!(display_name("hero.spriteframes", AssetKind::Animation), "hero");
+        assert_eq!(display_name("hero.frames.json", AssetKind::Animation), "hero");
+        assert_eq!(display_name("main.scene.json", AssetKind::Scene), "main");
+        // A dotted stem only loses the final extension.
+        assert_eq!(display_name("my.cool.tex.png", AssetKind::Image), "my.cool.tex");
+        // Folders and unknown files keep their full name.
+        assert_eq!(display_name("notes.txt", AssetKind::Unknown), "notes.txt");
+        assert_eq!(display_name("sprites", AssetKind::Folder), "sprites");
     }
 
     #[test]
