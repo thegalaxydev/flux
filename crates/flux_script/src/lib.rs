@@ -168,6 +168,7 @@ pub struct ScriptHost {
     /// cache is shared with Lua (app data) for tile-id resolution.
     tile_cache: TileCacheHandle,
     worldgen_cache: flux_core::tilemap::WorldGenCache,
+    recipe_cache: flux_core::factory::RecipeCatalogCache,
     scene: SceneHandle,
     root: PathBuf,
     prev_left: bool,
@@ -238,6 +239,7 @@ impl ScriptHost {
             cache,
             tile_cache,
             worldgen_cache,
+            recipe_cache: Default::default(),
             scene,
             root: script_root.to_path_buf(),
             prev_left: false,
@@ -305,6 +307,16 @@ impl ScriptHost {
             &mut self.tile_cache.borrow_mut(),
             &mut self.worldgen_cache,
             &self.root,
+        );
+        // Advance the factory: mining, production, and item transport.
+        let building_cache = building_cache_handle(&self.lua);
+        flux_core::factory::step(
+            &mut self.world.borrow_mut(),
+            &mut self.tile_cache.borrow_mut(),
+            &mut building_cache.borrow_mut(),
+            &mut self.recipe_cache,
+            &self.root,
+            dt as f32,
         );
         self.process_gui_clicks(input);
     }

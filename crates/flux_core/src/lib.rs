@@ -2,6 +2,7 @@ pub mod animation;
 pub mod building;
 pub mod camera;
 mod class;
+pub mod factory;
 mod error;
 pub mod gui;
 mod serialize;

@@ -189,6 +189,12 @@ declare class Instance
 	-- Camera2D only: viewport pixels <-> world position.
 	function ScreenToWorld(self, screenPos: Vec2): Vec2
 	function WorldToScreen(self, worldPos: Vec2): Vec2
+	-- Building only: item inventory (production + logistics).
+	function GetItem(self, item: string): number
+	function AddItem(self, item: string, count: number): number
+	function TakeItem(self, item: string, count: number): number
+	function ItemTotal(self): number
+	function GetInventory(self): { [string]: number }
 	-- Child instances and engine properties are accessed dynamically by name.
 	[string]: any
 end

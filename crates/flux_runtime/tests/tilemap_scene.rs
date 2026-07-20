@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use flux_core::{Value, World};
-use flux_runtime::{LogLevel, Session};
+use flux_runtime::{InputFrame, LogLevel, Session};
 
 fn fixtures() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
@@ -119,6 +119,8 @@ fn building_scene(script_path: &str) -> String {
         .unwrap();
     w.set_prop(map, "Buildings", Value::Asset("test.buildings.json".into()))
         .unwrap();
+    w.set_prop(map, "Recipes", Value::Asset("test.recipes.json".into()))
+        .unwrap();
     w.set_prop(map, "MapWidth", Value::Number(16.0)).unwrap();
     w.set_prop(map, "MapHeight", Value::Number(16.0)).unwrap();
 
@@ -126,6 +128,38 @@ fn building_scene(script_path: &str) -> String {
     w.set_prop(script, "SourcePath", Value::Asset(script_path.into()))
         .unwrap();
     w.to_json()
+}
+
+#[test]
+fn factory_mines_produces_and_transports_a_chain() {
+    let json = building_scene("scripts/test_factory.luau");
+    let mut session = Session::from_scene_json(&json, fixtures()).expect("scene loads");
+    // Run ~6 seconds of simulation.
+    for _ in 0..60 {
+        session.step(0.1, &InputFrame::default());
+    }
+    let world = session.world();
+    let w = world.borrow();
+    let map = w.find_first_child(w.workspace(), "Map").unwrap();
+
+    let by_type = |ty: &str| {
+        w.descendants(map)
+            .into_iter()
+            .find(|&id| w.class_name(id) == Some("Building") && matches!(w.get_prop(id, "Type"), Some(Value::String(s)) if s == ty))
+            .unwrap()
+    };
+    let miner = by_type("miner");
+    let storage = by_type("storage");
+
+    // The miner drew coal out of the deposit (started at 1000).
+    assert!(
+        w.tile_grid(map).unwrap().cell(1, 1).unwrap().ore_amount < 1000,
+        "miner did not consume the deposit"
+    );
+    let _ = miner;
+    // Plates crafted from that coal reached the storage sink downstream.
+    let plates = w.inventory(storage).map(|i| i.count("plate")).unwrap_or(0);
+    assert!(plates > 0, "no plates reached storage: {:?}", w.inventory(storage).map(|i| i.iter().map(|(k,v)|(k.to_string(),v)).collect::<Vec<_>>()));
 }
 
 #[test]

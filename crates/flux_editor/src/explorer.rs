@@ -607,6 +607,7 @@ fn drop_asset(state: &mut UiState, target: InstanceId, rel: &str) {
         AssetKind::TileSet => ("Tilemap", "TileSet"),
         AssetKind::WorldGen => ("Tilemap", "WorldGen"),
         AssetKind::BuildingCatalog => ("Tilemap", "Buildings"),
+        AssetKind::RecipeCatalog => ("Tilemap", "Recipes"),
         AssetKind::LuaModule => ("Module", "SourcePath"),
         AssetKind::LuaScript | AssetKind::Script => ("Script", "SourcePath"),
         _ => return,

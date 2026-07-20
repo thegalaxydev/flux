@@ -65,6 +65,8 @@ pub enum AssetKind {
     WorldGen,
     /// A `*.buildings.json` building catalog.
     BuildingCatalog,
+    /// A `*.recipes.json` crafting-recipe catalog.
+    RecipeCatalog,
     Prefab,
     Package,
     Font,
@@ -87,6 +89,9 @@ pub fn classify(name: &str, is_dir: bool) -> AssetKind {
     }
     if lower.ends_with(".buildings.json") {
         return AssetKind::BuildingCatalog;
+    }
+    if lower.ends_with(".recipes.json") {
+        return AssetKind::RecipeCatalog;
     }
     // A sprite-frame library (named clips). `.spriteframes` is the user-facing
     // extension; `.frames.json` is still recognized for older assets.

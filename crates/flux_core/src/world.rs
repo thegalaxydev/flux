@@ -3,6 +3,7 @@ use slotmap::{SecondaryMap, SlotMap};
 
 use crate::class::{ClassId, registry};
 use crate::error::CoreError;
+use crate::factory::Inventory;
 use crate::tilemap::TileGrid;
 use crate::value::Value;
 
@@ -26,6 +27,9 @@ pub struct World {
     /// [`crate::tilemap::sync`]. See the tilemap module for why the grid lives
     /// on the world rather than in the scene tree.
     tilemaps: SecondaryMap<InstanceId, TileGrid>,
+    /// Per-`Building` item buffers, keyed by instance. Transient like tilemaps,
+    /// but persisted in save games (see serialize.rs).
+    inventories: SecondaryMap<InstanceId, Inventory>,
 }
 
 impl World {
@@ -49,6 +53,7 @@ impl World {
             instances,
             root,
             tilemaps: SecondaryMap::new(),
+            inventories: SecondaryMap::new(),
         }
     }
 
@@ -126,6 +131,7 @@ impl World {
         let mut stack = vec![id];
         while let Some(cur) = stack.pop() {
             self.tilemaps.remove(cur);
+            self.inventories.remove(cur);
             if let Some(inst) = self.instances.remove(cur) {
                 stack.extend(inst.children);
             }
@@ -203,6 +209,23 @@ impl World {
     /// only regenerates on a config/seed change, not over these edits.
     pub fn tile_grid_mut(&mut self, id: InstanceId) -> Option<&mut TileGrid> {
         self.tilemaps.get_mut(id)
+    }
+
+    /// A `Building`'s item inventory, if it has one.
+    pub fn inventory(&self, id: InstanceId) -> Option<&Inventory> {
+        self.inventories.get(id)
+    }
+
+    pub fn inventory_mut(&mut self, id: InstanceId) -> Option<&mut Inventory> {
+        self.inventories.get_mut(id)
+    }
+
+    /// Attach (or replace) a building's inventory — used at placement and by
+    /// save-load. Ignored for dead instances.
+    pub fn set_inventory(&mut self, id: InstanceId, inv: Inventory) {
+        if self.instances.contains_key(id) {
+            self.inventories.insert(id, inv);
+        }
     }
 
     /// Store (or replace) a tilemap's derived grid. Only meaningful for live

@@ -253,7 +253,12 @@
         "GetBuildingAt": { "kind": "method", "params": [{ "name": "col", "type": "number" }, { "name": "row", "type": "number" }], "returns": "Instance?", "doc": "Tilemap only: the Building whose footprint covers (col, row), or nil." },
         "RemoveBuilding": { "kind": "method", "params": [{ "name": "col", "type": "number" }, { "name": "row", "type": "number" }], "returns": "boolean", "doc": "Tilemap only: remove the building covering (col, row). Returns whether one was removed." },
         "ScreenToWorld": { "kind": "method", "params": [{ "name": "screenPos", "type": "Vec2" }], "returns": "Vec2", "doc": "Camera2D only: convert a viewport pixel position to a world position." },
-        "WorldToScreen": { "kind": "method", "params": [{ "name": "worldPos", "type": "Vec2" }], "returns": "Vec2", "doc": "Camera2D only: convert a world position to a viewport pixel position." }
+        "WorldToScreen": { "kind": "method", "params": [{ "name": "worldPos", "type": "Vec2" }], "returns": "Vec2", "doc": "Camera2D only: convert a world position to a viewport pixel position." },
+        "GetItem": { "kind": "method", "params": [{ "name": "item", "type": "string" }], "returns": "number", "doc": "Building only: how many of item `item` are in this building's inventory." },
+        "AddItem": { "kind": "method", "params": [{ "name": "item", "type": "string" }, { "name": "count", "type": "number" }], "returns": "number", "doc": "Building only: add up to `count` of `item` (honoring capacity). Returns how many were added." },
+        "TakeItem": { "kind": "method", "params": [{ "name": "item", "type": "string" }, { "name": "count", "type": "number" }], "returns": "number", "doc": "Building only: remove up to `count` of `item`. Returns how many were removed." },
+        "ItemTotal": { "kind": "method", "params": [], "returns": "number", "doc": "Building only: total item count across this building's inventory." },
+        "GetInventory": { "kind": "method", "params": [], "returns": "{ [string]: number }", "doc": "Building only: a table of item id -> count for this building's inventory." }
       }
     },
     "Vec2": {

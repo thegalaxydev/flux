@@ -493,6 +493,7 @@ fn kind_icon(kind: AssetKind) -> Icon {
         AssetKind::TileSet => Icon::Material,
         AssetKind::WorldGen => Icon::Material,
         AssetKind::BuildingCatalog => Icon::Material,
+        AssetKind::RecipeCatalog => Icon::Material,
         AssetKind::Prefab => Icon::Prefab,
         AssetKind::Package => Icon::Package,
         AssetKind::Font => Icon::Font,

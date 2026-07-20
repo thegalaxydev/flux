@@ -18,6 +18,7 @@ pub enum AssetType {
     TileSet,
     WorldGen,
     BuildingCatalog,
+    RecipeCatalog,
     Script,
     Audio,
     Material,
@@ -236,6 +237,7 @@ impl ClassRegistry {
                 asset_prop("TileSet", AssetType::TileSet),
                 asset_prop("WorldGen", AssetType::WorldGen),
                 asset_prop("Buildings", AssetType::BuildingCatalog),
+                asset_prop("Recipes", AssetType::RecipeCatalog),
                 prop("TileWidth", Value::Number(64.0)),
                 prop("TileHeight", Value::Number(32.0)),
                 prop("MapWidth", Value::Number(64.0)),
@@ -256,6 +258,12 @@ impl ClassRegistry {
                 prop("Cell", Value::Vec2(Vec2::ZERO)),
                 prop("Footprint", Value::Vec2(Vec2::ONE)),
                 prop("Color", Value::Color(Color::WHITE)),
+                // Assigned crafting recipe (empty = none). Sim state below is
+                // transient (never serialized): craft timer, mine + flow accumulators.
+                prop("Recipe", Value::String(String::new())),
+                prop_t("_Timer", Value::Number(0.0)),
+                prop_t("_MineT", Value::Number(0.0)),
+                prop_t("_Flow", Value::Number(0.0)),
             ],
         );
         // The 2D camera. `Position`/`Zoom` are the live view; the rest configure

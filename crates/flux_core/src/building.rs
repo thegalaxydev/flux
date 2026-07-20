@@ -45,6 +45,21 @@ pub struct BuildingDoc {
     /// Free-form grouping for build menus (e.g. "production", "logistics").
     #[serde(default)]
     pub category: String,
+    /// Recipe id (in the paired recipe catalog) assigned on placement, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<String>,
+    /// Extracts ore from the tile beneath it into its inventory.
+    #[serde(default)]
+    pub mines: bool,
+    /// Ore/sec a miner extracts (also the production/transfer cadence baseline).
+    #[serde(default = "one_f")]
+    pub rate: f32,
+    /// Inventory capacity in items; 0 = unlimited (for storage/sinks).
+    #[serde(default = "default_capacity")]
+    pub capacity: u32,
+    /// Accepts any item pushed to it (a storage sink), not just recipe inputs.
+    #[serde(default)]
+    pub stores: bool,
 }
 
 fn one_by_one() -> [u32; 2] {
@@ -52,6 +67,12 @@ fn one_by_one() -> [u32; 2] {
 }
 fn white() -> [f32; 4] {
     [1.0, 1.0, 1.0, 1.0]
+}
+fn one_f() -> f32 {
+    1.0
+}
+fn default_capacity() -> u32 {
+    50
 }
 
 impl BuildingCatalogDoc {
@@ -75,6 +96,11 @@ pub struct BuildingDef {
     pub height: u32,
     pub color: Color,
     pub category: String,
+    pub recipe: Option<String>,
+    pub mines: bool,
+    pub rate: f32,
+    pub capacity: u32,
+    pub stores: bool,
 }
 
 pub struct BuildingCatalog {
@@ -102,6 +128,11 @@ impl BuildingCatalog {
                     height: b.size[1].max(1),
                     color: Color::new(b.color[0], b.color[1], b.color[2], b.color[3]),
                     category: b.category.clone(),
+                    recipe: b.recipe.clone(),
+                    mines: b.mines,
+                    rate: b.rate.max(0.0),
+                    capacity: b.capacity,
+                    stores: b.stores,
                 }
             })
             .collect();
@@ -265,6 +296,13 @@ pub fn place(
         Value::Vec2(Vec2::new(def.width as f32, def.height as f32)),
     );
     let _ = world.set_prop(id, "Color", Value::Color(def.color));
+    let _ = world.set_prop(
+        id,
+        "Recipe",
+        Value::String(def.recipe.clone().unwrap_or_default()),
+    );
+    // Give the building its inventory buffer up front.
+    world.set_inventory(id, crate::factory::Inventory::new(def.capacity));
     Some(id)
 }
 

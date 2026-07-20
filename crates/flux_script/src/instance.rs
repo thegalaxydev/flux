@@ -106,6 +106,14 @@ fn is_camera(w: &World, id: InstanceId) -> bool {
     w.class_name(id) == Some("Camera2D")
 }
 
+fn is_building(w: &World, id: InstanceId) -> bool {
+    w.class_name(id) == Some("Building")
+}
+
+fn building_only(method: &str) -> mlua::Error {
+    mlua::Error::RuntimeError(format!("{method} can only be called on a Building"))
+}
+
 /// A camera's `(Position, Zoom)` for screen<->world conversion.
 fn camera_view(w: &World, id: InstanceId) -> (glam::Vec2, f32) {
     let pos = match w.get_prop(id, "Position") {
@@ -503,6 +511,58 @@ impl UserData for LuaInstance {
                 return Err(tilemap_only("RemoveBuilding"));
             }
             Ok(flux_core::building::remove_at(&mut w, this.0, col, row))
+        });
+        // ---- Building inventory ----
+        m.add_method("GetItem", |lua, this, item: String| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_building(&w, this.0) {
+                return Err(building_only("GetItem"));
+            }
+            Ok(w.inventory(this.0).map(|i| i.count(&item)).unwrap_or(0))
+        });
+        m.add_method("AddItem", |lua, this, (item, n): (String, u32)| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            if !is_building(&w, this.0) {
+                return Err(building_only("AddItem"));
+            }
+            Ok(w.inventory_mut(this.0).map(|i| i.add(&item, n)).unwrap_or(0))
+        });
+        m.add_method("TakeItem", |lua, this, (item, n): (String, u32)| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            if !is_building(&w, this.0) {
+                return Err(building_only("TakeItem"));
+            }
+            Ok(w.inventory_mut(this.0).map(|i| i.take(&item, n)).unwrap_or(0))
+        });
+        m.add_method("ItemTotal", |lua, this, ()| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_building(&w, this.0) {
+                return Err(building_only("ItemTotal"));
+            }
+            Ok(w.inventory(this.0).map(|i| i.total()).unwrap_or(0))
+        });
+        m.add_method("GetInventory", |lua, this, ()| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_building(&w, this.0) {
+                return Err(building_only("GetInventory"));
+            }
+            let table = lua.create_table()?;
+            if let Some(inv) = w.inventory(this.0) {
+                for (item, count) in inv.iter() {
+                    table.set(item, count)?;
+                }
+            }
+            Ok(table)
         });
         // ---- Camera2D screen<->world conversion ----
         m.add_method("ScreenToWorld", |lua, this, v: LuaValue| {
