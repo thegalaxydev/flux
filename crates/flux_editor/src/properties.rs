@@ -3,6 +3,7 @@ use std::path::Path;
 use eframe::egui::{self, Ui};
 use flux_core::animation::AnimationCache;
 use flux_core::{AssetType, Color, InstanceId, Rect, UDim2, Value, World, registry};
+use flux_icons::Icons;
 
 use crate::app::{Pending, UiState};
 use crate::asset_field::{AssetFieldAction, asset_field};
@@ -14,6 +15,7 @@ pub fn show(
     state: &mut UiState,
     root: Option<&Path>,
     anim_cache: &mut AnimationCache,
+    icons: &Icons,
 ) {
     let Some(id) = state.selection.filter(|&id| world.contains(id)) else {
         ui.weak("Nothing selected");
@@ -35,7 +37,7 @@ pub fn show(
                     if prop == "Animation" && class == Some("AnimatedSprite") {
                         animation_row(ui, world, id, value, root, anim_cache, state);
                     } else if let Value::Asset(cur) = value {
-                        asset_row(ui, world, id, prop, cur, root, state);
+                        asset_row(ui, world, id, prop, cur, root, state, icons);
                     } else if let Some((new, merge)) = value_widget(ui, world, prop, value) {
                         state.queue.push(Pending {
                             cmd: Command::set_prop(id, prop, value.clone(), new),
@@ -59,6 +61,7 @@ fn asset_type_of(world: &World, id: InstanceId, prop: &str) -> AssetType {
 }
 
 /// A typed asset-reference field: drag-and-drop, clear, and open-in-editor.
+#[allow(clippy::too_many_arguments)]
 fn asset_row(
     ui: &mut Ui,
     world: &World,
@@ -67,6 +70,7 @@ fn asset_row(
     cur: &str,
     root: Option<&Path>,
     state: &mut UiState,
+    icons: &Icons,
 ) {
     let expected = asset_type_of(world, id, prop);
     let set = |state: &mut UiState, new: String| {
@@ -75,7 +79,7 @@ fn asset_row(
             merge: false,
         });
     };
-    match asset_field(ui, cur, expected, root) {
+    match asset_field(ui, cur, expected, root, icons) {
         AssetFieldAction::Assign(path) => set(state, path),
         AssetFieldAction::Clear => set(state, String::new()),
         AssetFieldAction::Open => match expected {

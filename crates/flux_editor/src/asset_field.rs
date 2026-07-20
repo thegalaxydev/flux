@@ -7,6 +7,7 @@ use std::path::Path;
 
 use eframe::egui::{self, Color32, Sense, Stroke, StrokeKind, Ui, vec2};
 use flux_core::AssetType;
+use flux_icons::{Icon, Icons};
 use flux_render::{AssetKind, classify};
 
 use crate::app::AssetDrag;
@@ -48,6 +49,7 @@ pub fn asset_field(
     value: &str,
     expected: AssetType,
     root: Option<&Path>,
+    icons: &Icons,
 ) -> AssetFieldAction {
     let mut action = AssetFieldAction::None;
     // Right-to-left: the buttons take their natural width first, then the drop
@@ -56,15 +58,23 @@ pub fn asset_field(
     // which makes a resizable SidePanel grow leftward every frame.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let has = !value.is_empty();
-        if ui
-            .add_enabled(has, egui::Button::new("✕").small())
+        // Use the bundled lucide icon set so glyphs always render (a raw "✕"
+        // falls back to a missing-glyph box in egui's default font).
+        if icons
+            .icon(Icon::Remove)
+            .size(14.0)
+            .disabled(!has)
+            .button(ui)
             .on_hover_text("Clear")
             .clicked()
         {
             action = AssetFieldAction::Clear;
         }
-        if ui
-            .add_enabled(has, egui::Button::new("↗").small())
+        if icons
+            .icon(Icon::Open)
+            .size(14.0)
+            .disabled(!has)
+            .button(ui)
             .on_hover_text("Open asset")
             .clicked()
         {
