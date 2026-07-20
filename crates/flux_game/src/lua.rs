@@ -19,9 +19,6 @@ type BuildingCacheHandle = Rc<RefCell<BuildingCatalogCache>>;
 fn is_tilemap(w: &World, id: InstanceId) -> bool {
     w.class_name(id) == Some("Tilemap")
 }
-fn is_building(w: &World, id: InstanceId) -> bool {
-    w.class_name(id) == Some("Building")
-}
 fn err(msg: impl Into<String>) -> mlua::Error {
     mlua::Error::RuntimeError(msg.into())
 }
@@ -136,13 +133,14 @@ pub(crate) fn install() {
         (num("_PowerProduced"), num("_PowerConsumed")).into_lua_multi(lua)
     });
 
+    // Inventories are a generic per-instance capability (see `World::component`):
+    // buildings get a capped one at placement, but any instance can hold items —
+    // e.g. a Tilemap carrying the player's building stock. So these methods work
+    // on any instance; a missing inventory reads as empty.
     api::register_method("GetItem", |lua, id, args| {
         let item = <String>::from_lua_multi(args, lua)?;
         let rc = api::world(lua);
         let w = rc.borrow();
-        if !is_building(&w, id) {
-            return Err(err("GetItem can only be called on a Building"));
-        }
         w.component::<Inventory>(id)
             .map(|i| i.count(&item))
             .unwrap_or(0)
@@ -153,8 +151,10 @@ pub(crate) fn install() {
         let (item, n) = <(String, u32)>::from_lua_multi(args, lua)?;
         let rc = api::world(lua);
         let mut w = rc.borrow_mut();
-        if !is_building(&w, id) {
-            return Err(err("AddItem can only be called on a Building"));
+        // Give the instance an unlimited inventory on first use if it has none,
+        // so non-building holders (like the map's stock) just work.
+        if w.component::<Inventory>(id).is_none() {
+            w.set_component::<Inventory>(id, Inventory::new(0));
         }
         w.component_mut::<Inventory>(id)
             .map(|i| i.add(&item, n))
@@ -166,9 +166,6 @@ pub(crate) fn install() {
         let (item, n) = <(String, u32)>::from_lua_multi(args, lua)?;
         let rc = api::world(lua);
         let mut w = rc.borrow_mut();
-        if !is_building(&w, id) {
-            return Err(err("TakeItem can only be called on a Building"));
-        }
         w.component_mut::<Inventory>(id)
             .map(|i| i.take(&item, n))
             .unwrap_or(0)
@@ -179,9 +176,6 @@ pub(crate) fn install() {
         <()>::from_lua_multi(args, lua)?;
         let rc = api::world(lua);
         let w = rc.borrow();
-        if !is_building(&w, id) {
-            return Err(err("ItemTotal can only be called on a Building"));
-        }
         w.component::<Inventory>(id)
             .map(|i| i.total())
             .unwrap_or(0)
@@ -192,9 +186,6 @@ pub(crate) fn install() {
         <()>::from_lua_multi(args, lua)?;
         let rc = api::world(lua);
         let w = rc.borrow();
-        if !is_building(&w, id) {
-            return Err(err("GetInventory can only be called on a Building"));
-        }
         let table = lua.create_table()?;
         if let Some(inv) = w.component::<Inventory>(id) {
             for (item, count) in inv.iter() {

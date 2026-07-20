@@ -111,6 +111,28 @@ fn factory_mines_produces_and_transports_a_chain() {
 }
 
 #[test]
+fn map_held_inventory_round_trips_through_save() {
+    // The shop/inventory game stores the player's building stock in an Inventory
+    // on the Tilemap itself (not a Building). Prove that generic inventory
+    // survives a save-string round trip via the registered component hook.
+    setup();
+    let mut w = World::new();
+    let map = w.create("Tilemap", w.workspace()).unwrap();
+    w.set_component::<Inventory>(map, Inventory::from_pairs(0, [("miner".into(), 3), ("smelter".into(), 1)]));
+
+    let saved = w.to_save_string();
+    let reloaded = World::from_json(&saved).unwrap();
+    let map2 = reloaded
+        .descendants(reloaded.workspace())
+        .into_iter()
+        .find(|&id| reloaded.class_name(id) == Some("Tilemap"))
+        .expect("tilemap restored");
+    let inv = reloaded.component::<Inventory>(map2).expect("map inventory restored");
+    assert_eq!(inv.count("miner"), 3);
+    assert_eq!(inv.count("smelter"), 1);
+}
+
+#[test]
 fn lua_save_service_persists_and_reloads_world() {
     let root = setup();
     let saves = root.join(".flux/saves");
