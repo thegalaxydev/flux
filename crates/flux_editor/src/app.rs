@@ -37,6 +37,8 @@ pub struct UiState {
     pub tool: crate::viewport::Tool,
     pub grid_snap: bool,
     pub grid_size: f32,
+    /// Rotation snap increment (degrees) applied while holding Shift.
+    pub angle_snap: f32,
     /// Set when a drag is cancelled (Escape); suppresses further drag handling
     /// until the mouse is released.
     pub suppress_drag: bool,
@@ -69,6 +71,7 @@ impl Default for UiState {
             tool: crate::viewport::Tool::default(),
             grid_snap: false,
             grid_size: 32.0,
+            angle_snap: 15.0,
             suppress_drag: false,
             viewport_rect: egui::Rect::NOTHING,
             explorer: crate::explorer::ExplorerState::default(),
@@ -168,6 +171,7 @@ impl EditorApp {
         self.editor.font_size = self.settings.font_size;
         self.ui.grid_size = self.settings.grid_size;
         self.ui.grid_snap = self.settings.grid_snap;
+        self.ui.angle_snap = self.settings.angle_snap;
     }
 
     fn settings_window(&mut self, ctx: &egui::Context) {
@@ -210,7 +214,7 @@ impl EditorApp {
                     }
                     ui.add_space(10.0);
 
-                    ui.strong("Grid");
+                    ui.strong("Grid & snapping");
                     changed |= ui
                         .checkbox(&mut self.settings.grid_snap, "Snap to grid by default")
                         .changed();
@@ -220,6 +224,16 @@ impl EditorApp {
                             .add(
                                 egui::DragValue::new(&mut self.settings.grid_size)
                                     .range(1.0..=512.0),
+                            )
+                            .changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Rotation snap");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.settings.angle_snap)
+                                    .range(1.0..=180.0)
+                                    .suffix("°"),
                             )
                             .changed();
                     });
@@ -946,15 +960,26 @@ impl EditorApp {
                         }
                     }
                     ui.separator();
-                    ui.checkbox(&mut self.ui.grid_snap, "Grid")
-                        .on_hover_text("Snap Move to the grid");
-                    if self.ui.grid_snap {
+                    if self.ui.tool == Tool::Rotate {
+                        // Rotation snap increment (applied while holding Shift).
                         ui.add(
-                            egui::DragValue::new(&mut self.ui.grid_size)
+                            egui::DragValue::new(&mut self.ui.angle_snap)
                                 .speed(1.0)
-                                .range(1.0..=512.0)
-                                .prefix("size "),
-                        );
+                                .range(1.0..=180.0)
+                                .suffix("°"),
+                        )
+                        .on_hover_text("Hold Shift while rotating to snap to this increment");
+                    } else {
+                        ui.checkbox(&mut self.ui.grid_snap, "Grid")
+                            .on_hover_text("Snap Move to the grid");
+                        if self.ui.grid_snap {
+                            ui.add(
+                                egui::DragValue::new(&mut self.ui.grid_size)
+                                    .speed(1.0)
+                                    .range(1.0..=512.0)
+                                    .prefix("size "),
+                            );
+                        }
                     }
                 }
 

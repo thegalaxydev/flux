@@ -48,6 +48,8 @@ pub struct Settings {
     pub grid_size: f32,
     #[serde(default)]
     pub grid_snap: bool,
+    #[serde(default = "default_angle")]
+    pub angle_snap: f32,
 }
 
 fn yes() -> bool {
@@ -59,6 +61,9 @@ fn default_font() -> f32 {
 fn default_grid() -> f32 {
     32.0
 }
+fn default_angle() -> f32 {
+    15.0
+}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -68,6 +73,7 @@ impl Default for Settings {
             syntax: SyntaxTheme::default(),
             grid_size: 32.0,
             grid_snap: false,
+            angle_snap: 15.0,
         }
     }
 }

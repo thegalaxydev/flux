@@ -283,7 +283,7 @@ pub fn show(
                             ));
                         }
                     } else if state.tool == Tool::Move {
-                        if let Some(axis) = move_arrow_at(corners_center(&corners), p) {
+                        if let Some(axis) = move_arrow_at(&corners, p) {
                             state.sprite_op = Some(begin_sprite_op(
                                 id,
                                 xf,
@@ -361,10 +361,11 @@ pub fn show(
             let corners = xf.corners().map(to_screen);
             outline(&painter, &corners, ACCENT, 1.5);
             match state.tool {
-                Tool::Move => draw_move_arrows(&painter, corners_center(&corners)),
+                Tool::Move => draw_move_arrows(&painter, &corners),
                 Tool::Resize => {
+                    let (ux, uy) = local_axes(&corners);
                     for (c, _) in sprite_handles(&corners) {
-                        handle_dot(&painter, c);
+                        handle_quad(&painter, c, ux, uy);
                     }
                 }
                 Tool::Rotate => {
@@ -495,7 +496,7 @@ fn apply_sprite_op(
             let a1 = angle(pivot, pointer);
             let mut deg = s.rotation + (a1 - a0).to_degrees();
             if shift {
-                deg = transform::snap_angle(deg, 15.0);
+                deg = transform::snap_angle(deg, state.angle_snap);
             }
             vec![(
                 "Rotation",
@@ -525,20 +526,25 @@ fn corners_center(c: &[Pos2; 4]) -> Pos2 {
     )
 }
 
-/// The four move arrows: (screen direction, constrained world axis).
-/// Screen Y grows downward, so "up" is -Y on screen but the +Y world axis.
-fn move_arrow_dirs() -> [(egui::Vec2, glam::Vec2); 4] {
-    [
-        (egui::vec2(1.0, 0.0), glam::vec2(1.0, 0.0)),  // right
-        (egui::vec2(-1.0, 0.0), glam::vec2(1.0, 0.0)), // left
-        (egui::vec2(0.0, 1.0), glam::vec2(0.0, 1.0)),  // down
-        (egui::vec2(0.0, -1.0), glam::vec2(0.0, 1.0)), // up
-    ]
+/// Unit screen vectors along the sprite's local +X (top edge) and +Y (left
+/// edge). With a uniform, unflipped world->screen map these double as the world
+/// axes to constrain movement to, so `Move` follows the object's rotation.
+fn local_axes(c: &[Pos2; 4]) -> (egui::Vec2, egui::Vec2) {
+    ((c[1] - c[0]).normalized(), (c[3] - c[0]).normalized())
+}
+
+/// The four move arrows for local axes: (screen direction, constrained world
+/// axis). Both directions of an axis share one constraint line.
+fn move_arrows(ux: egui::Vec2, uy: egui::Vec2) -> [(egui::Vec2, glam::Vec2); 4] {
+    let (wx, wy) = (glam::vec2(ux.x, ux.y), glam::vec2(uy.x, uy.y));
+    [(ux, wx), (-ux, wx), (uy, wy), (-uy, wy)]
 }
 
 /// World axis of the move arrow under `p`, if any.
-fn move_arrow_at(center: Pos2, p: Pos2) -> Option<glam::Vec2> {
-    move_arrow_dirs().into_iter().find_map(|(dir, axis)| {
+fn move_arrow_at(corners: &[Pos2; 4], p: Pos2) -> Option<glam::Vec2> {
+    let center = corners_center(corners);
+    let (ux, uy) = local_axes(corners);
+    move_arrows(ux, uy).into_iter().find_map(|(dir, axis)| {
         let a = center + dir * ARROW_INNER;
         let b = center + dir * ARROW_LEN;
         (dist_to_segment(p, a, b) <= HANDLE * 0.75).then_some(axis)
@@ -555,8 +561,10 @@ fn dist_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     (p - (a + ab * t)).length()
 }
 
-fn draw_move_arrows(painter: &egui::Painter, center: Pos2) {
-    for (dir, _) in move_arrow_dirs() {
+fn draw_move_arrows(painter: &egui::Painter, corners: &[Pos2; 4]) {
+    let center = corners_center(corners);
+    let (ux, uy) = local_axes(corners);
+    for (dir, _) in move_arrows(ux, uy) {
         let tip = center + dir * ARROW_LEN;
         painter.line_segment([center + dir * ARROW_INNER, tip], Stroke::new(2.0, ACCENT));
         // Arrowhead: a small triangle pointing along `dir`.
@@ -626,6 +634,22 @@ fn handle_dot(painter: &egui::Painter, c: Pos2) {
     );
 }
 
+/// A resize handle drawn as a square oriented with the object (edges along the
+/// local screen axes `ux`/`uy`), so it rotates with the sprite.
+fn handle_quad(painter: &egui::Painter, c: Pos2, ux: egui::Vec2, uy: egui::Vec2) {
+    let h = HANDLE * 0.5;
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            c + (-ux - uy) * h,
+            c + (ux - uy) * h,
+            c + (ux + uy) * h,
+            c + (-ux + uy) * h,
+        ],
+        ACCENT,
+        Stroke::NONE,
+    ));
+}
+
 fn set_transform_cursor(ui: &Ui, response: &egui::Response, tool: Tool, corners: &[Pos2; 4]) {
     let Some(p) = response.hover_pos() else {
         return;
@@ -641,13 +665,7 @@ fn set_transform_cursor(ui: &Ui, response: &egui::Response, tool: Tool, corners:
                 CursorIcon::ResizeVertical
             }
         }),
-        Tool::Move => move_arrow_at(corners_center(corners), p).map(|axis| {
-            if axis.x != 0.0 {
-                CursorIcon::ResizeHorizontal
-            } else {
-                CursorIcon::ResizeVertical
-            }
-        }),
+        Tool::Move => move_arrow_at(corners, p).map(|_| CursorIcon::Move),
         _ => None,
     };
     if let Some(icon) = icon {
