@@ -107,6 +107,8 @@ pub struct EditorApp {
     anim_cache: flux_core::animation::AnimationCache,
     /// Shared tileset cache for drawing Tilemaps in edit mode.
     tile_cache: flux_core::tilemap::TileSetCache,
+    /// World-generation config cache used when regenerating Tilemap grids.
+    worldgen_cache: flux_core::tilemap::WorldGenCache,
     play: Option<Session>,
     logs: Vec<LogEntry>,
     path: Option<PathBuf>,
@@ -147,6 +149,7 @@ impl EditorApp {
             anim: crate::animation_editor::AnimationEditor::default(),
             anim_cache: Default::default(),
             tile_cache: Default::default(),
+            worldgen_cache: Default::default(),
             play: None,
             logs: Vec::new(),
             path,
@@ -548,6 +551,7 @@ impl EditorApp {
         self.textures.clear();
         self.anim_cache.clear();
         self.tile_cache.clear();
+        self.worldgen_cache.clear();
         self.editor.clear();
         self.anim = crate::animation_editor::AnimationEditor::default();
     }
@@ -1340,7 +1344,17 @@ impl eframe::App for EditorApp {
         self.step_play(ctx);
         // Keep the edit-world's tilemap grids current (cheap when unchanged).
         // The play session syncs its own world in `Session::step`.
-        flux_core::tilemap::sync(&mut self.world);
+        {
+            let root = self
+                .project_root()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            flux_core::tilemap::sync(
+                &mut self.world,
+                &mut self.tile_cache,
+                &mut self.worldgen_cache,
+                &root,
+            );
+        }
         self.handle_shortcuts(ctx);
         self.menu_bar(ctx);
         self.toolbar(ctx);

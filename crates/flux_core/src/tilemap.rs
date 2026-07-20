@@ -1,6 +1,6 @@
 //! Data-driven isometric tilemaps.
 //!
-//! Three pieces, mirroring the animation subsystem ([`crate::animation`]):
+//! Pieces, mirroring the animation subsystem ([`crate::animation`]):
 //!
 //! * **Iso math** — [`tile_to_world`] / [`world_to_tile`] convert between tile
 //!   `(col, row)` coordinates and world pixels for a 2:1 diamond isometric
@@ -9,15 +9,19 @@
 //!
 //! * **`TileSet` asset** — a `*.tileset.json` file defines the tile *palette*:
 //!   footprint size plus a list of tile types (id, colour, optional atlas
-//!   rect). Parsed once and shared via [`Rc`] through a [`TileSetCache`], the
-//!   same lazy-load pattern as `AnimationCache`.
+//!   rect). Includes both terrain tiles and ore tiles. Parsed once and shared
+//!   via [`Rc`] through a [`TileSetCache`].
 //!
-//! * **`TileGrid`** — the actual per-cell data. A `Tilemap` instance stores only
-//!   *config* (tileset, tile size, map dimensions, seed); the grid itself is
-//!   **derived** deterministically from `(config, seed)` by [`generate`] and
-//!   held in a transient side-table on the [`World`] (so it's shared by editor,
-//!   player, and scripts, and never bloats the scene file). [`sync`] keeps that
-//!   side-table in step with the instances' config.
+//! * **`WorldGen` asset** — a `*.worldgen.json` file defines *how the world is
+//!   generated*: noise feature sizes, an ordered table of elevation/moisture
+//!   biome bands, and an ore table (frequency, richness, elevation range). This
+//!   is what makes terrain data-driven rather than hardcoded.
+//!
+//! * **`TileGrid`** — the actual per-cell data ([`Cell`]: base tile + optional
+//!   ore + ore amount). A `Tilemap` instance stores only *config* (tileset,
+//!   worldgen, tile size, map dimensions, seed); the grid itself is **derived**
+//!   deterministically by [`generate`] and held in a transient side-table on the
+//!   [`World`], kept in step by [`sync`].
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -45,7 +49,7 @@ pub fn tile_to_world(col: i32, row: i32, tw: f32, th: f32) -> Vec2 {
 }
 
 /// Inverse of [`tile_to_world`]: the `(col, row)` of the tile whose diamond
-/// contains world point `p`. Used for picking/painting (future milestones).
+/// contains world point `p`. Used for picking/painting and render culling.
 pub fn world_to_tile(p: Vec2, tw: f32, th: f32) -> (i32, i32) {
     // tile_to_world gives (x, y) = ((col-row)*tw/2, (col+row)*th/2). Invert:
     //   col - row = 2x/tw,  col + row = 2y/th.
@@ -77,7 +81,6 @@ pub fn map_bounds(width: u32, height: u32, tw: f32, th: f32) -> (Vec2, Vec2) {
         return (Vec2::ZERO, Vec2::ZERO);
     }
     let (w, h) = (width as i32, height as i32);
-    // Extreme tile centres, then expand by a half-diamond.
     let centres = [
         tile_to_world(0, 0, tw, th),
         tile_to_world(w - 1, 0, tw, th),
@@ -130,6 +133,9 @@ fn default_th() -> f32 {
 }
 fn white() -> [f32; 4] {
     [1.0, 1.0, 1.0, 1.0]
+}
+fn one() -> f32 {
+    1.0
 }
 
 impl TileSetDoc {
@@ -241,16 +247,172 @@ impl TileSetCache {
 }
 
 // ---------------------------------------------------------------------------
+// WorldGen authoring schema (`*.worldgen.json`)
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct WorldGenDoc {
+    /// Feature size (in tiles) of the elevation noise — bigger = broader
+    /// landmasses.
+    #[serde(default = "default_elev_scale")]
+    pub elevation_scale: f32,
+    /// Feature size (in tiles) of the moisture noise (drives forest vs plains).
+    #[serde(default = "default_moist_scale")]
+    pub moisture_scale: f32,
+    /// Ordered biome bands: the first whose elevation/moisture window matches a
+    /// cell wins, so put more specific (moisture-gated) bands first.
+    #[serde(default)]
+    pub biomes: Vec<BiomeDoc>,
+    /// Ore deposits, tried in order; the first match per cell wins.
+    #[serde(default)]
+    pub ores: Vec<OreDoc>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BiomeDoc {
+    /// Tile id (in the paired `TileSet`) this band paints.
+    pub tile: String,
+    /// Inclusive upper elevation bound in `[0, 1]` for this band.
+    #[serde(default = "one")]
+    pub max_elevation: f32,
+    #[serde(default)]
+    pub min_moisture: f32,
+    #[serde(default = "one")]
+    pub max_moisture: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OreDoc {
+    /// Ore tile id (in the paired `TileSet`) used as the deposit marker.
+    pub tile: String,
+    /// Fraction (`0..1`) of eligible cells that carry this ore (clustered).
+    #[serde(default = "default_freq")]
+    pub frequency: f32,
+    /// Base deposit amount; scaled up where the deposit noise peaks.
+    #[serde(default = "default_richness")]
+    pub richness: f32,
+    #[serde(default)]
+    pub min_elevation: f32,
+    #[serde(default = "one")]
+    pub max_elevation: f32,
+    /// Feature size (in tiles) of the deposit noise — bigger = larger patches.
+    #[serde(default = "default_ore_scale")]
+    pub scale: f32,
+}
+
+fn default_elev_scale() -> f32 {
+    14.0
+}
+fn default_moist_scale() -> f32 {
+    9.0
+}
+fn default_freq() -> f32 {
+    0.06
+}
+fn default_richness() -> f32 {
+    2000.0
+}
+fn default_ore_scale() -> f32 {
+    5.0
+}
+
+impl WorldGenDoc {
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| e.to_string())
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+}
+
+/// Parsed world-generation config, shared via [`Rc`].
+pub struct WorldGen {
+    pub elevation_scale: f32,
+    pub moisture_scale: f32,
+    pub biomes: Vec<BiomeDoc>,
+    pub ores: Vec<OreDoc>,
+}
+
+impl WorldGen {
+    pub fn parse(json: &str) -> Result<Self, String> {
+        Ok(Self::from_doc(&WorldGenDoc::from_json(json)?))
+    }
+
+    pub fn from_doc(doc: &WorldGenDoc) -> Self {
+        WorldGen {
+            elevation_scale: doc.elevation_scale.max(1.0),
+            moisture_scale: doc.moisture_scale.max(1.0),
+            biomes: doc.biomes.clone(),
+            ores: doc.ores.clone(),
+        }
+    }
+}
+
+/// Loads and caches `*.worldgen.json` files, mirroring [`TileSetCache`].
+#[derive(Default)]
+pub struct WorldGenCache {
+    configs: HashMap<String, Option<Rc<WorldGen>>>,
+}
+
+impl WorldGenCache {
+    pub fn get(&mut self, rel: &str, root: &Path) -> Option<Rc<WorldGen>> {
+        if rel.is_empty() {
+            return None;
+        }
+        if let Some(v) = self.configs.get(rel) {
+            return v.clone();
+        }
+        let loaded = std::fs::read_to_string(root.join(rel))
+            .ok()
+            .and_then(|text| WorldGen::parse(&text).ok())
+            .map(Rc::new);
+        self.configs.insert(rel.to_string(), loaded.clone());
+        loaded
+    }
+
+    pub fn clear(&mut self) {
+        self.configs.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // TileGrid — the derived per-cell data
 // ---------------------------------------------------------------------------
 
-/// A rectangular grid of tile indices (into a [`TileSet`]'s palette), row-major.
-/// Bounded and flat for now; chunked storage for very large maps is a later
-/// milestone.
+/// Sentinel for [`Cell::ore`] meaning "no ore in this cell".
+pub const NO_ORE: u16 = u16::MAX;
+
+/// One map cell: a base terrain tile plus an optional ore deposit. Ore and
+/// terrain indices both point into the map's [`TileSet`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cell {
+    pub tile: u16,
+    pub ore: u16,
+    pub ore_amount: u16,
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Self {
+            tile: 0,
+            ore: NO_ORE,
+            ore_amount: 0,
+        }
+    }
+}
+
+impl Cell {
+    pub fn has_ore(&self) -> bool {
+        self.ore != NO_ORE
+    }
+}
+
+/// A rectangular grid of [`Cell`]s, row-major. Bounded and flat for now.
 pub struct TileGrid {
     width: u32,
     height: u32,
-    cells: Vec<u16>,
+    cells: Vec<Cell>,
     /// Hash of the `(config, seed)` this grid was generated from, so [`sync`]
     /// can tell when it must be regenerated.
     signature: u64,
@@ -265,31 +427,36 @@ impl TileGrid {
         self.height
     }
 
-    /// Tile index at `(col, row)`, or `None` if out of bounds.
-    pub fn get(&self, col: i32, row: i32) -> Option<u16> {
+    fn index(&self, col: i32, row: i32) -> Option<usize> {
         if col < 0 || row < 0 || col as u32 >= self.width || row as u32 >= self.height {
             return None;
         }
-        let idx = row as usize * self.width as usize + col as usize;
-        self.cells.get(idx).copied()
+        Some(row as usize * self.width as usize + col as usize)
+    }
+
+    /// The full cell at `(col, row)`, or `None` if out of bounds.
+    pub fn cell(&self, col: i32, row: i32) -> Option<Cell> {
+        self.index(col, row).map(|i| self.cells[i])
+    }
+
+    /// The base terrain tile index at `(col, row)`, or `None` if out of bounds.
+    pub fn get(&self, col: i32, row: i32) -> Option<u16> {
+        self.cell(col, row).map(|c| c.tile)
     }
 }
 
 /// Config that fully determines a generated grid; hashed into a signature.
-fn signature(width: u32, height: u32, seed: u64) -> u64 {
+fn signature(width: u32, height: u32, seed: u64, tileset: &str, worldgen: &str) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     width.hash(&mut h);
     height.hash(&mut h);
     seed.hash(&mut h);
+    tileset.hash(&mut h);
+    worldgen.hash(&mut h);
     h.finish()
 }
 
-// ---- deterministic minimal generator (value noise) --------------------------
-//
-// A placeholder terrain generator so tilemaps are visible and non-trivial. It
-// emits four palette indices (0 water, 1 sand, 2 grass, 3 rock) so a demo
-// tileset authored in that order reads as terrain. Milestone 2b replaces this
-// with a data-driven biome/ore generator.
+// ---- noise primitives -------------------------------------------------------
 
 fn hash01(x: i32, y: i32, seed: u64) -> f32 {
     let mut h = (x as i64 as u64).wrapping_mul(0x27d4_eb2f_1656_67c5);
@@ -321,32 +488,157 @@ fn value_noise(fx: f32, fy: f32, seed: u64) -> f32 {
     top + (bot - top) * ty
 }
 
+/// Two-octave value noise (broad shape + finer detail), in `[0, 1]`.
+fn fbm(col: u32, row: u32, scale: f32, seed: u64) -> f32 {
+    let (c, r) = (col as f32, row as f32);
+    let big = value_noise(c / scale, r / scale, seed);
+    let small = value_noise(c / (scale / 3.0).max(1.0), r / (scale / 3.0).max(1.0), seed ^ 0xABCD);
+    (big * 0.65 + small * 0.35).clamp(0.0, 1.0)
+}
+
+// ---- generation -------------------------------------------------------------
+
+struct ResolvedBiome {
+    tile: u16,
+    max_elev: f32,
+    min_m: f32,
+    max_m: f32,
+}
+
+struct ResolvedOre {
+    tile: u16,
+    freq: f32,
+    richness: f32,
+    min_e: f32,
+    max_e: f32,
+    scale: f32,
+    seed: u64,
+}
+
 /// Generate a deterministic `width` x `height` grid from `seed`.
-pub fn generate(width: u32, height: u32, seed: u64) -> TileGrid {
+///
+/// With a [`WorldGen`] config and its paired [`TileSet`], terrain and ore are
+/// fully data-driven. Without them (or if the config resolves to no biomes), a
+/// built-in placeholder generator runs so a `Tilemap` still shows *something*.
+pub fn generate(
+    width: u32,
+    height: u32,
+    seed: u64,
+    config: Option<&WorldGen>,
+    tileset: Option<&TileSet>,
+) -> TileGrid {
+    let resolved = config.zip(tileset).and_then(|(cfg, ts)| {
+        let biomes: Vec<ResolvedBiome> = cfg
+            .biomes
+            .iter()
+            .filter_map(|b| {
+                Some(ResolvedBiome {
+                    tile: ts.index_of(&b.tile)?,
+                    max_elev: b.max_elevation,
+                    min_m: b.min_moisture,
+                    max_m: b.max_moisture,
+                })
+            })
+            .collect();
+        if biomes.is_empty() {
+            return None;
+        }
+        let ores: Vec<ResolvedOre> = cfg
+            .ores
+            .iter()
+            .enumerate()
+            .filter_map(|(i, o)| {
+                Some(ResolvedOre {
+                    tile: ts.index_of(&o.tile)?,
+                    freq: o.frequency.clamp(0.0, 1.0),
+                    richness: o.richness.max(0.0),
+                    min_e: o.min_elevation,
+                    max_e: o.max_elevation,
+                    scale: o.scale.max(1.0),
+                    seed: seed ^ 0x9e37_79b1u64.wrapping_mul(i as u64 + 1),
+                })
+            })
+            .collect();
+        Some((cfg, biomes, ores))
+    });
+
     let mut cells = Vec::with_capacity((width as usize) * (height as usize));
-    for row in 0..height {
-        for col in 0..width {
-            // Two octaves of value noise -> a rolling terrain height field.
-            let n = value_noise(col as f32 / 12.0, row as f32 / 12.0, seed) * 0.65
-                + value_noise(col as f32 / 4.0, row as f32 / 4.0, seed ^ 0xABCD) * 0.35;
-            let idx: u16 = if n < 0.34 {
-                0 // water
-            } else if n < 0.40 {
-                1 // sand
-            } else if n < 0.72 {
-                2 // grass
-            } else {
-                3 // rock
-            };
-            cells.push(idx);
+    match resolved {
+        Some((cfg, biomes, ores)) => {
+            for row in 0..height {
+                for col in 0..width {
+                    let e = fbm(col, row, cfg.elevation_scale, seed);
+                    let m = value_noise(
+                        col as f32 / cfg.moisture_scale,
+                        row as f32 / cfg.moisture_scale,
+                        seed ^ 0x5EED,
+                    );
+                    let tile = pick_biome(&biomes, e, m);
+                    let (ore, ore_amount) = pick_ore(&ores, col, row, e);
+                    cells.push(Cell {
+                        tile,
+                        ore,
+                        ore_amount,
+                    });
+                }
+            }
+        }
+        None => {
+            // Placeholder: rolling terrain over four palette indices.
+            for row in 0..height {
+                for col in 0..width {
+                    let e = fbm(col, row, 12.0, seed);
+                    let tile: u16 = if e < 0.34 {
+                        0
+                    } else if e < 0.40 {
+                        1
+                    } else if e < 0.72 {
+                        2
+                    } else {
+                        3
+                    };
+                    cells.push(Cell {
+                        tile,
+                        ..Cell::default()
+                    });
+                }
+            }
         }
     }
+
     TileGrid {
         width,
         height,
         cells,
-        signature: signature(width, height, seed),
+        signature: 0,
     }
+}
+
+fn pick_biome(biomes: &[ResolvedBiome], e: f32, m: f32) -> u16 {
+    for b in biomes {
+        if e <= b.max_elev && m >= b.min_m && m <= b.max_m {
+            return b.tile;
+        }
+    }
+    biomes.last().map(|b| b.tile).unwrap_or(0)
+}
+
+fn pick_ore(ores: &[ResolvedOre], col: u32, row: u32, e: f32) -> (u16, u16) {
+    for o in ores {
+        if e < o.min_e || e > o.max_e || o.freq <= 0.0 {
+            continue;
+        }
+        let n = value_noise(col as f32 / o.scale, row as f32 / o.scale, o.seed);
+        let thr = 1.0 - o.freq;
+        if n > thr {
+            // Amount ramps from 40% of richness at the deposit edge to 100% at
+            // its peak, so bigger deposits are richer in the middle.
+            let t = ((n - thr) / (1.0 - thr)).clamp(0.0, 1.0);
+            let amount = (o.richness * (0.4 + 0.6 * t)).min(u16::MAX as f32) as u16;
+            return (o.tile, amount);
+        }
+    }
+    (NO_ORE, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -360,12 +652,25 @@ fn num(world: &World, id: InstanceId, name: &str) -> f64 {
     }
 }
 
+fn asset(world: &World, id: InstanceId, name: &str) -> String {
+    match world.get_prop(id, name) {
+        Some(crate::value::Value::Asset(s)) => s.clone(),
+        _ => String::new(),
+    }
+}
+
 /// For every `Tilemap` in the workspace, (re)generate its [`TileGrid`] into the
 /// world's side-table when it's missing or its config changed. Cheap when
 /// nothing changed (a hash compare per tilemap), so it's safe to call each
-/// frame from the editor and the runtime step.
-pub fn sync(world: &mut World) {
-    let maps: Vec<(InstanceId, u32, u32, u64)> = world
+/// frame from the editor and the runtime step. `root` and the caches resolve
+/// the `TileSet`/`WorldGen` assets (loaded once, reused).
+pub fn sync(
+    world: &mut World,
+    tilesets: &mut TileSetCache,
+    worldgens: &mut WorldGenCache,
+    root: &Path,
+) {
+    let maps: Vec<(InstanceId, u32, u32, u64, String, String)> = world
         .descendants(world.workspace())
         .into_iter()
         .filter(|&id| world.class_name(id) == Some("Tilemap"))
@@ -373,14 +678,21 @@ pub fn sync(world: &mut World) {
             let w = num(world, id, "MapWidth").clamp(0.0, 4096.0) as u32;
             let h = num(world, id, "MapHeight").clamp(0.0, 4096.0) as u32;
             let seed = num(world, id, "Seed") as i64 as u64;
-            (id, w, h, seed)
+            let ts = asset(world, id, "TileSet");
+            let wg = asset(world, id, "WorldGen");
+            (id, w, h, seed, ts, wg)
         })
         .collect();
-    for (id, w, h, seed) in maps {
-        let sig = signature(w, h, seed);
+
+    for (id, w, h, seed, ts_path, wg_path) in maps {
+        let sig = signature(w, h, seed, &ts_path, &wg_path);
         let stale = world.tile_grid(id).map(|g| g.signature != sig).unwrap_or(true);
         if stale {
-            world.set_tile_grid(id, generate(w, h, seed));
+            let tileset = tilesets.get(&ts_path, root);
+            let worldgen = worldgens.get(&wg_path, root);
+            let mut grid = generate(w, h, seed, worldgen.as_deref(), tileset.as_deref());
+            grid.signature = sig;
+            world.set_tile_grid(id, grid);
         }
     }
 }
@@ -388,6 +700,10 @@ pub fn sync(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn caches() -> (TileSetCache, WorldGenCache) {
+        (TileSetCache::default(), WorldGenCache::default())
+    }
 
     #[test]
     fn tile_world_round_trips_at_tile_centres() {
@@ -408,7 +724,6 @@ mod tests {
     #[test]
     fn map_bounds_covers_the_footprint() {
         let (min, max) = map_bounds(4, 4, 64.0, 32.0);
-        // Widest tiles are the left corner (0,3) and right corner (3,0).
         assert_eq!(min.x, tile_to_world(0, 3, 64.0, 32.0).x - 32.0);
         assert_eq!(max.x, tile_to_world(3, 0, 64.0, 32.0).x + 32.0);
         assert!(min.y < max.y);
@@ -429,36 +744,98 @@ mod tests {
         assert_eq!(ts.tile_width, 48.0);
         assert_eq!(ts.index_of("grass"), Some(1));
         assert_eq!(ts.index_of("nope"), None);
-        let water = ts.tile(0).unwrap();
-        assert!(water.rect.is_whole()); // no rect -> whole texture
+        assert!(ts.tile(0).unwrap().rect.is_whole());
         assert_eq!(ts.tile(1).unwrap().rect, Rect::new(0.0, 0.0, 48.0, 24.0));
     }
 
     #[test]
-    fn generation_is_deterministic_and_bounded() {
-        let a = generate(20, 16, 42);
-        let b = generate(20, 16, 42);
-        assert_eq!(a.width(), 20);
-        assert_eq!(a.height(), 16);
+    fn placeholder_generation_is_deterministic_and_bounded() {
+        let a = generate(20, 16, 42, None, None);
+        let b = generate(20, 16, 42, None, None);
         for row in 0..16 {
             for col in 0..20 {
-                assert_eq!(a.get(col, row), b.get(col, row));
+                assert_eq!(a.cell(col, row), b.cell(col, row));
                 assert!(a.get(col, row).unwrap() <= 3);
+                assert!(!a.cell(col, row).unwrap().has_ore());
             }
         }
         assert_eq!(a.get(-1, 0), None);
-        assert_eq!(a.get(20, 0), None);
-        // A different seed yields a different map (overwhelmingly likely).
-        let c = generate(20, 16, 7);
+        let c = generate(20, 16, 7, None, None);
         let differs = (0..16).any(|r| (0..20).any(|col| a.get(col, r) != c.get(col, r)));
         assert!(differs);
     }
 
+    const TILESET: &str = r#"{
+        "tiles": [
+            { "id": "water" }, { "id": "grass" }, { "id": "mountain" },
+            { "id": "coal" }, { "id": "uranium" }
+        ]
+    }"#;
+
+    const WORLDGEN: &str = r#"{
+        "elevation_scale": 8, "moisture_scale": 6,
+        "biomes": [
+            { "tile": "water",    "max_elevation": 0.35 },
+            { "tile": "grass",    "max_elevation": 0.75 },
+            { "tile": "mountain", "max_elevation": 1.01 }
+        ],
+        "ores": [
+            { "tile": "coal",    "frequency": 0.5, "richness": 5000,
+              "min_elevation": 0.35, "max_elevation": 0.75, "scale": 4 },
+            { "tile": "uranium", "frequency": 0.5, "richness": 1000,
+              "min_elevation": 0.75, "max_elevation": 1.01, "scale": 4 }
+        ]
+    }"#;
+
+    #[test]
+    fn data_driven_generation_respects_biomes_and_ores() {
+        let ts = TileSet::parse(TILESET).unwrap();
+        let wg = WorldGen::parse(WORLDGEN).unwrap();
+        let grid = generate(64, 64, 2024, Some(&wg), Some(&ts));
+
+        let (water, grass, mountain) = (0u16, 1, 2);
+        let (coal, uranium) = (3u16, 4);
+        let mut biome_seen = [false; 3];
+        let mut ore_seen = [false; 2];
+
+        for row in 0..64 {
+            for col in 0..64 {
+                let c = grid.cell(col, row).unwrap();
+                // Every base tile is a real biome tile, never an ore tile.
+                assert!(c.tile == water || c.tile == grass || c.tile == mountain);
+                if c.tile == water {
+                    biome_seen[0] = true;
+                    // Water is below every ore's elevation window -> never ore.
+                    assert!(!c.has_ore(), "ore on water at ({col},{row})");
+                }
+                if c.tile == grass {
+                    biome_seen[1] = true;
+                    // Grass sits in coal's band; uranium is highland-only.
+                    assert_ne!(c.ore, uranium, "uranium in grass at ({col},{row})");
+                }
+                if c.tile == mountain {
+                    biome_seen[2] = true;
+                    assert_ne!(c.ore, coal, "coal in mountain at ({col},{row})");
+                }
+                if c.ore == coal {
+                    ore_seen[0] = true;
+                    assert!(c.ore_amount > 0);
+                }
+                if c.ore == uranium {
+                    ore_seen[1] = true;
+                }
+            }
+        }
+        assert!(biome_seen.iter().all(|&b| b), "all biomes present");
+        assert!(ore_seen.iter().all(|&o| o), "both ores present");
+    }
+
     #[test]
     fn sync_generates_and_regenerates_on_config_change() {
+        let (mut ts, mut wg) = caches();
+        let root = Path::new(".");
         let mut world = World::new();
-        let ws = world.workspace();
-        let tm = world.create("Tilemap", ws).unwrap();
+        let tm = world.create("Tilemap", world.workspace()).unwrap();
         world
             .set_prop(tm, "MapWidth", crate::value::Value::Number(8.0))
             .unwrap();
@@ -466,16 +843,15 @@ mod tests {
             .set_prop(tm, "MapHeight", crate::value::Value::Number(8.0))
             .unwrap();
         assert!(world.tile_grid(tm).is_none());
-        sync(&mut world);
+        sync(&mut world, &mut ts, &mut wg, root);
         assert_eq!(world.tile_grid(tm).unwrap().width(), 8);
 
-        // Changing the seed regenerates.
-        let before: Vec<u16> = collect(world.tile_grid(tm).unwrap());
+        let before = collect(world.tile_grid(tm).unwrap());
         world
             .set_prop(tm, "Seed", crate::value::Value::Number(99.0))
             .unwrap();
-        sync(&mut world);
-        let after: Vec<u16> = collect(world.tile_grid(tm).unwrap());
+        sync(&mut world, &mut ts, &mut wg, root);
+        let after = collect(world.tile_grid(tm).unwrap());
         assert_ne!(before, after);
     }
 

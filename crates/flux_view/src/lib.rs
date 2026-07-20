@@ -100,6 +100,10 @@ pub fn draw_scene(
 ) -> Vec<(InstanceId, Rect)> {
     let origin = rect.center();
     let to_screen = |x: f32, y: f32| origin + (egui::vec2(x, y) - camera.offset) * camera.zoom;
+    let to_world = |p: Pos2| -> glam::Vec2 {
+        let v = (p - origin) / camera.zoom + camera.offset;
+        glam::vec2(v.x, v.y)
+    };
 
     // Tilemaps, Sprites and AnimatedSprites all render here, ordered by ZIndex.
     let mut nodes: Vec<(InstanceId, f64)> = world
@@ -120,8 +124,9 @@ pub fn draw_scene(
     for (id, _) in nodes {
         // A Tilemap draws its whole grid; the rest are single textured quads.
         if world.class_name(id) == Some("Tilemap") {
-            if let Some(aabb) = draw_tilemap(painter, ctx, textures, tiles, root, world, id, rect, &to_screen)
-            {
+            if let Some(aabb) = draw_tilemap(
+                painter, ctx, textures, tiles, root, world, id, rect, &to_screen, &to_world,
+            ) {
                 let visible = matches!(world.get_prop(id, "Visible"), Some(Value::Bool(true)));
                 let locked = matches!(world.get_prop(id, "Locked"), Some(Value::Bool(true)));
                 if visible && !locked {
@@ -274,6 +279,7 @@ fn draw_tilemap(
     id: InstanceId,
     rect: Rect,
     to_screen: &impl Fn(f32, f32) -> Pos2,
+    to_world: &impl Fn(Pos2) -> glam::Vec2,
 ) -> Option<Rect> {
     let grid = world.tile_grid(id)?;
     let pos = match world.get_prop(id, "Position") {
@@ -307,11 +313,16 @@ fn draw_tilemap(
         .as_ref()
         .map(|h| (h.size()[0] as f32, h.size()[1] as f32));
 
-    let (cols, rows) = (grid.width() as i32, grid.height() as i32);
+    // Range-cull to the tiles the viewport can actually see: inverse-map the
+    // four screen corners to tile space and iterate only that window (+pad for
+    // partially-visible edge diamonds). Keeps huge maps cheap.
+    let (col0, col1, row0, row1) =
+        visible_tile_range(rect, pos, tw, th, grid.width(), grid.height(), to_world);
+
     // Row-major (back-to-front) order for correct overlap of any tall tiles.
-    for row in 0..rows {
-        for col in 0..cols {
-            let Some(index) = grid.get(col, row) else {
+    for row in row0..=row1 {
+        for col in col0..=col1 {
+            let Some(cell) = grid.cell(col, row) else {
                 continue;
             };
             let corners = flux_core::tilemap::tile_corners(col, row, tw, th)
@@ -320,20 +331,11 @@ fn draw_tilemap(
             if !rect.intersects(aabb) {
                 continue;
             }
-            let (color, src) = match tileset.as_ref() {
-                Some(ts) if !ts.is_empty() => {
-                    let clamped = (index as usize).min(ts.len() - 1) as u16;
-                    let def = ts.tile(clamped).unwrap();
-                    (def.color, def.rect)
-                }
-                _ => (fallback_color(index), SrcRect::default()),
-            };
+            let (color, src) = tile_visual(tileset.as_deref(), cell.tile);
             let tint = to_color(&color);
 
             match (handle.as_ref(), tex_size) {
-                (Some(h), Some((tpw, tph)))
-                    if !src.is_whole() && tpw > 0.0 && tph > 0.0 =>
-                {
+                (Some(h), Some((tpw, tph))) if !src.is_whole() && tpw > 0.0 && tph > 0.0 => {
                     // Textured tile: the atlas region fills the tile's
                     // axis-aligned `tw x th` box (iso art bakes in the diamond).
                     let c = flux_core::tilemap::tile_to_world(col, row, tw, th);
@@ -349,16 +351,75 @@ fn draw_tilemap(
                 }
                 _ => {
                     // Flat colour diamond.
-                    painter.add(Shape::convex_polygon(
-                        corners.to_vec(),
-                        tint,
-                        Stroke::NONE,
-                    ));
+                    painter.add(Shape::convex_polygon(corners.to_vec(), tint, Stroke::NONE));
                 }
+            }
+
+            // Ore deposit overlay: a smaller inset diamond in the ore's colour.
+            if cell.has_ore() {
+                let (ore_color, _) = tile_visual(tileset.as_deref(), cell.ore);
+                let centre = to_screen(
+                    pos.x + flux_core::tilemap::tile_to_world(col, row, tw, th).x,
+                    pos.y + flux_core::tilemap::tile_to_world(col, row, tw, th).y,
+                );
+                let pip: Vec<Pos2> = corners
+                    .iter()
+                    .map(|c| centre + (*c - centre) * 0.5)
+                    .collect();
+                painter.add(Shape::convex_polygon(pip, to_color(&ore_color), Stroke::NONE));
             }
         }
     }
     Some(map_aabb)
+}
+
+/// Resolve a tile index to its `(colour, atlas rect)`, falling back to a default
+/// palette when there's no tileset or the index is out of range.
+fn tile_visual(
+    tileset: Option<&flux_core::tilemap::TileSet>,
+    index: u16,
+) -> (Color, SrcRect) {
+    match tileset {
+        Some(ts) if !ts.is_empty() => {
+            let def = ts.tile((index as usize).min(ts.len() - 1) as u16).unwrap();
+            (def.color, def.rect)
+        }
+        _ => (fallback_color(index), SrcRect::default()),
+    }
+}
+
+/// The inclusive `(col0, col1, row0, row1)` window of tiles overlapping the
+/// viewport `rect`, clamped to the grid. Inverse-maps the screen corners into
+/// tile space; a 2-tile pad covers diamonds straddling the edge.
+#[allow(clippy::too_many_arguments)]
+fn visible_tile_range(
+    rect: Rect,
+    pos: glam::Vec2,
+    tw: f32,
+    th: f32,
+    width: u32,
+    height: u32,
+    to_world: &impl Fn(Pos2) -> glam::Vec2,
+) -> (i32, i32, i32, i32) {
+    let corners = [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()];
+    let mut min_c = i32::MAX;
+    let mut max_c = i32::MIN;
+    let mut min_r = i32::MAX;
+    let mut max_r = i32::MIN;
+    for p in corners {
+        let (c, r) = flux_core::tilemap::world_to_tile(to_world(p) - pos, tw, th);
+        min_c = min_c.min(c);
+        max_c = max_c.max(c);
+        min_r = min_r.min(r);
+        max_r = max_r.max(r);
+    }
+    let pad = 2;
+    (
+        (min_c - pad).max(0),
+        (max_c + pad).min(width as i32 - 1),
+        (min_r - pad).max(0),
+        (max_r + pad).min(height as i32 - 1),
+    )
 }
 
 /// Draws the GUI layer and returns the absolute rect of each visible GuiObject in

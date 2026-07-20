@@ -16,6 +16,7 @@ pub enum AssetType {
     Texture,
     SpriteFrames,
     TileSet,
+    WorldGen,
     Script,
     Audio,
     Material,
@@ -232,6 +233,7 @@ impl ClassRegistry {
             false,
             vec![
                 asset_prop("TileSet", AssetType::TileSet),
+                asset_prop("WorldGen", AssetType::WorldGen),
                 prop("TileWidth", Value::Number(64.0)),
                 prop("TileHeight", Value::Number(32.0)),
                 prop("MapWidth", Value::Number(64.0)),
