@@ -1,11 +1,16 @@
+use std::any::Any;
+use std::collections::HashMap;
+
 use indexmap::IndexMap;
 use slotmap::{SecondaryMap, SlotMap};
 
 use crate::class::{ClassId, registry};
 use crate::error::CoreError;
-use crate::factory::Inventory;
 use crate::tilemap::TileGrid;
 use crate::value::Value;
+
+/// A bag of type-keyed plugin components attached to one instance.
+type ComponentBag = HashMap<std::any::TypeId, Box<dyn Any>>;
 
 slotmap::new_key_type! {
     pub struct InstanceId;
@@ -27,9 +32,11 @@ pub struct World {
     /// [`crate::tilemap::sync`]. See the tilemap module for why the grid lives
     /// on the world rather than in the scene tree.
     tilemaps: SecondaryMap<InstanceId, TileGrid>,
-    /// Per-`Building` item buffers, keyed by instance. Transient like tilemaps,
-    /// but persisted in save games (see serialize.rs).
-    inventories: SecondaryMap<InstanceId, Inventory>,
+    /// Generic per-instance plugin data (e.g. a game's inventories), keyed by
+    /// component type. The engine never inspects these; plugins access them via
+    /// [`World::component`] and register save (de)serializers with
+    /// [`crate::save`].
+    components: SecondaryMap<InstanceId, ComponentBag>,
 }
 
 impl World {
@@ -53,7 +60,7 @@ impl World {
             instances,
             root,
             tilemaps: SecondaryMap::new(),
-            inventories: SecondaryMap::new(),
+            components: SecondaryMap::new(),
         }
     }
 
@@ -131,7 +138,7 @@ impl World {
         let mut stack = vec![id];
         while let Some(cur) = stack.pop() {
             self.tilemaps.remove(cur);
-            self.inventories.remove(cur);
+            self.components.remove(cur);
             if let Some(inst) = self.instances.remove(cur) {
                 stack.extend(inst.children);
             }
@@ -211,20 +218,37 @@ impl World {
         self.tilemaps.get_mut(id)
     }
 
-    /// A `Building`'s item inventory, if it has one.
-    pub fn inventory(&self, id: InstanceId) -> Option<&Inventory> {
-        self.inventories.get(id)
+    /// A plugin component of type `T` attached to `id`, if present.
+    pub fn component<T: Any>(&self, id: InstanceId) -> Option<&T> {
+        self.components
+            .get(id)?
+            .get(&std::any::TypeId::of::<T>())?
+            .downcast_ref::<T>()
     }
 
-    pub fn inventory_mut(&mut self, id: InstanceId) -> Option<&mut Inventory> {
-        self.inventories.get_mut(id)
+    /// Mutable access to a plugin component of type `T` on `id`, if present.
+    pub fn component_mut<T: Any>(&mut self, id: InstanceId) -> Option<&mut T> {
+        self.components
+            .get_mut(id)?
+            .get_mut(&std::any::TypeId::of::<T>())?
+            .downcast_mut::<T>()
     }
 
-    /// Attach (or replace) a building's inventory — used at placement and by
-    /// save-load. Ignored for dead instances.
-    pub fn set_inventory(&mut self, id: InstanceId, inv: Inventory) {
+    /// Attach (or replace) a plugin component of type `T` on a live instance.
+    pub fn set_component<T: Any>(&mut self, id: InstanceId, value: T) {
         if self.instances.contains_key(id) {
-            self.inventories.insert(id, inv);
+            self.components
+                .entry(id)
+                .unwrap()
+                .or_default()
+                .insert(std::any::TypeId::of::<T>(), Box::new(value));
+        }
+    }
+
+    /// Remove a plugin component of type `T` from `id`.
+    pub fn remove_component<T: Any>(&mut self, id: InstanceId) {
+        if let Some(bag) = self.components.get_mut(id) {
+            bag.remove(&std::any::TypeId::of::<T>());
         }
     }
 

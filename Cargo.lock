@@ -1168,6 +1168,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "flux_core",
+ "flux_game",
  "flux_icons",
  "flux_render",
  "flux_runtime",
@@ -1178,6 +1179,23 @@ dependencies = [
  "serde",
  "serde_json",
  "winresource",
+]
+
+[[package]]
+name = "flux_game"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "flux_core",
+ "flux_render",
+ "flux_runtime",
+ "flux_script",
+ "flux_view",
+ "glam",
+ "indexmap",
+ "mlua",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1193,6 +1211,7 @@ name = "flux_player"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "flux_game",
  "flux_runtime",
  "flux_view",
  "glam",

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::RwLock;
 
 use flux_core::World;
 use flux_data::PersistenceProvider;
@@ -8,6 +9,20 @@ use flux_script::ScriptHost;
 
 pub use flux_data::{DataBackend, DataError};
 pub use flux_script::{InputFrame, LogEntry, LogLevel};
+
+/// A per-session simulation system a plugin adds to the runtime (e.g. a game's
+/// factory or reactor sim). Stepped every frame after scripts have run.
+pub trait System {
+    fn step(&mut self, world: &mut World, root: &Path, dt: f32);
+}
+
+static SYSTEMS: RwLock<Vec<fn() -> Box<dyn System>>> = RwLock::new(Vec::new());
+
+/// Register a system constructor. Each [`Session`] builds one instance (so a
+/// system may own per-session caches) and steps it every frame.
+pub fn register_system(ctor: fn() -> Box<dyn System>) {
+    SYSTEMS.write().unwrap().push(ctor);
+}
 
 /// How a play session is configured: the persistence backend
 /// `DataStoreService` writes to, and the current scene's project-relative path
@@ -28,6 +43,8 @@ impl Default for SessionOptions {
 
 pub struct Session {
     host: ScriptHost,
+    systems: Vec<Box<dyn System>>,
+    root: PathBuf,
 }
 
 impl Session {
@@ -64,7 +81,12 @@ impl Session {
         if let Some(warning) = warning {
             host.push_error(warning);
         }
-        Ok(Session { host })
+        let systems = SYSTEMS.read().unwrap().iter().map(|ctor| ctor()).collect();
+        Ok(Session {
+            host,
+            systems,
+            root: script_root.to_path_buf(),
+        })
     }
 
     /// A scene switch requested from Luau via `Scene:Load`/`Scene:Reload`, if any.
@@ -75,6 +97,14 @@ impl Session {
 
     pub fn step(&mut self, dt: f64, input: &InputFrame) {
         self.host.step(dt, input);
+        // Plugin systems run after scripts + engine sync for the frame.
+        if !self.systems.is_empty() {
+            let world = self.host.world();
+            let mut w = world.borrow_mut();
+            for system in &mut self.systems {
+                system.step(&mut w, &self.root, dt as f32);
+            }
+        }
     }
 
     pub fn world(&self) -> Rc<RefCell<World>> {

@@ -100,8 +100,89 @@ fn pan_axis(keys: &HashSet<String>) -> Vec2 {
     v
 }
 
-pub(crate) type WorldHandle = Rc<RefCell<World>>;
+pub type WorldHandle = Rc<RefCell<World>>;
 pub(crate) type ButtonSignals = Rc<RefCell<HashMap<InstanceId, Signal>>>;
+
+// ---- Plugin extension registries -------------------------------------------
+//
+// A plugin (e.g. `flux_game`) registers Lua methods, services, and session-init
+// callbacks here at install time; `LuaInstance` / `GetService` / `ScriptHost`
+// consult them. See the public [`api`] module for what handlers may use.
+
+type MethodHandler =
+    Box<dyn Fn(&Lua, InstanceId, mlua::MultiValue) -> mlua::Result<mlua::MultiValue> + Send + Sync>;
+
+static METHODS: std::sync::RwLock<Vec<(String, MethodHandler)>> = std::sync::RwLock::new(Vec::new());
+static SERVICES: std::sync::RwLock<Vec<(String, fn(&Lua) -> mlua::Result<mlua::Value>)>> =
+    std::sync::RwLock::new(Vec::new());
+static SESSION_INITS: std::sync::RwLock<Vec<fn(&Lua)>> = std::sync::RwLock::new(Vec::new());
+
+/// Register a plugin method callable on any instance as `obj:Name(...)`. The
+/// handler receives the instance id and the call arguments (self already
+/// stripped).
+pub fn register_method<F>(name: &str, handler: F)
+where
+    F: Fn(&Lua, InstanceId, mlua::MultiValue) -> mlua::Result<mlua::MultiValue> + Send + Sync + 'static,
+{
+    METHODS
+        .write()
+        .unwrap()
+        .push((name.to_string(), Box::new(handler)));
+}
+
+/// Register a service returned by `game:GetService(name)`.
+pub fn register_service(name: &str, factory: fn(&Lua) -> mlua::Result<mlua::Value>) {
+    SERVICES.write().unwrap().push((name.to_string(), factory));
+}
+
+/// Register a callback run once per session in `ScriptHost::new` — e.g. to set
+/// plugin app-data the method handlers need.
+pub fn register_session_init(f: fn(&Lua)) {
+    SESSION_INITS.write().unwrap().push(f);
+}
+
+pub(crate) fn has_method(name: &str) -> bool {
+    METHODS.read().unwrap().iter().any(|(n, _)| n == name)
+}
+
+pub(crate) fn call_method(
+    lua: &Lua,
+    name: &str,
+    id: InstanceId,
+    args: mlua::MultiValue,
+) -> mlua::Result<mlua::MultiValue> {
+    let guard = METHODS.read().unwrap();
+    let (_, handler) = guard
+        .iter()
+        .find(|(n, _)| n == name)
+        .ok_or_else(|| mlua::Error::RuntimeError(format!("no registered method '{name}'")))?;
+    handler(lua, id, args)
+}
+
+pub(crate) fn lookup_service(lua: &Lua, name: &str) -> Option<mlua::Result<mlua::Value>> {
+    let guard = SERVICES.read().unwrap();
+    guard.iter().find(|(n, _)| n == name).map(|(_, f)| f(lua))
+}
+
+fn run_session_inits(lua: &Lua) {
+    for f in SESSION_INITS.read().unwrap().iter() {
+        f(lua);
+    }
+}
+
+/// The stable surface plugin method handlers build against.
+pub mod api {
+    pub use crate::instance::LuaInstance;
+    pub use crate::types::{LuaVec2, as_vec2};
+    pub use crate::{
+        WorldHandle, asset_root, register_method, register_service, register_session_init,
+    };
+
+    /// The world handle from Lua app data.
+    pub fn world(lua: &mlua::Lua) -> WorldHandle {
+        crate::world_handle(lua)
+    }
+}
 
 /// Scene-switching state behind the `Scene` global: the current scene (relative
 /// to the project root) and a pending switch the host drains each step.
@@ -133,19 +214,12 @@ pub(crate) fn tile_cache_handle(lua: &Lua) -> TileCacheHandle {
         .clone()
 }
 
-pub(crate) fn asset_root(lua: &Lua) -> PathBuf {
+/// The project root, for resolving relative asset paths from Lua (also used by
+/// plugin method handlers via [`api`]).
+pub fn asset_root(lua: &Lua) -> PathBuf {
     lua.app_data_ref::<ModuleRoot>()
         .map(|r| r.0.clone())
         .unwrap_or_default()
-}
-
-/// Shared building-catalog cache, in Lua app data for `Tilemap:PlaceBuilding`.
-pub(crate) type BuildingCacheHandle = Rc<RefCell<flux_core::building::BuildingCatalogCache>>;
-
-pub(crate) fn building_cache_handle(lua: &Lua) -> BuildingCacheHandle {
-    lua.app_data_ref::<BuildingCacheHandle>()
-        .expect("building cache app data missing")
-        .clone()
 }
 
 /// The scene-switch state, so `SaveService:Load` can request a world swap the
@@ -168,7 +242,6 @@ pub struct ScriptHost {
     /// cache is shared with Lua (app data) for tile-id resolution.
     tile_cache: TileCacheHandle,
     worldgen_cache: flux_core::tilemap::WorldGenCache,
-    recipe_cache: flux_core::factory::RecipeCatalogCache,
     scene: SceneHandle,
     root: PathBuf,
     prev_left: bool,
@@ -208,9 +281,9 @@ impl ScriptHost {
         lua.set_app_data(ModuleCache::default());
         let tile_cache: TileCacheHandle = Rc::new(RefCell::new(Default::default()));
         lua.set_app_data(tile_cache.clone());
-        let building_cache: BuildingCacheHandle = Rc::new(RefCell::new(Default::default()));
-        lua.set_app_data(building_cache);
         lua.set_app_data(scene.clone());
+        // Let installed plugins attach their own app-data (caches, etc.).
+        run_session_inits(&lua);
 
         setup_globals(&lua, &world, &scheduler, &log).map_err(|e| e.to_string())?;
         lua.globals()
@@ -239,7 +312,6 @@ impl ScriptHost {
             cache,
             tile_cache,
             worldgen_cache,
-            recipe_cache: Default::default(),
             scene,
             root: script_root.to_path_buf(),
             prev_left: false,
@@ -308,23 +380,8 @@ impl ScriptHost {
             &mut self.worldgen_cache,
             &self.root,
         );
-        // Advance the factory: mining, production, and item transport.
-        let building_cache = building_cache_handle(&self.lua);
-        flux_core::factory::step(
-            &mut self.world.borrow_mut(),
-            &mut self.tile_cache.borrow_mut(),
-            &mut building_cache.borrow_mut(),
-            &mut self.recipe_cache,
-            &self.root,
-            dt as f32,
-        );
-        // Advance reactors and refresh each map's power balance.
-        flux_core::reactor::step(
-            &mut self.world.borrow_mut(),
-            &mut building_cache.borrow_mut(),
-            &self.root,
-            dt as f32,
-        );
+        // Plugin systems (factory, reactor, …) are stepped by the Session after
+        // this, so scripts have already run for the frame.
         self.process_gui_clicks(input);
     }
 

@@ -63,14 +63,41 @@ pub enum AssetKind {
     TileSet,
     /// A `*.worldgen.json` procedural world-generation config.
     WorldGen,
-    /// A `*.buildings.json` building catalog.
-    BuildingCatalog,
-    /// A `*.recipes.json` crafting-recipe catalog.
-    RecipeCatalog,
     Prefab,
     Package,
     Font,
     Unknown,
+    /// A plugin-registered asset type, identified by name (see
+    /// [`register_asset_kind`]).
+    Custom(&'static str),
+}
+
+use std::sync::RwLock;
+
+// (suffix, kind-name) and (kind-name, class, prop) registered by plugins.
+static CUSTOM_KINDS: RwLock<Vec<(&'static str, &'static str)>> = RwLock::new(Vec::new());
+static DROPS: RwLock<Vec<(&'static str, &'static str, &'static str)>> = RwLock::new(Vec::new());
+
+/// Register a plugin asset type: files ending in `suffix` classify as
+/// `AssetKind::Custom(name)`.
+pub fn register_asset_kind(suffix: &'static str, name: &'static str) {
+    CUSTOM_KINDS.write().unwrap().push((suffix, name));
+}
+
+/// Register what dropping a `Custom(name)` asset into the scene creates:
+/// an instance of `class` with the asset set on `prop`.
+pub fn register_drop(name: &'static str, class: &'static str, prop: &'static str) {
+    DROPS.write().unwrap().push((name, class, prop));
+}
+
+/// The `(class, prop)` a dropped `Custom(name)` asset should create, if any.
+pub fn drop_target(name: &str) -> Option<(&'static str, &'static str)> {
+    DROPS
+        .read()
+        .unwrap()
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, c, p)| (*c, *p))
 }
 
 pub fn classify(name: &str, is_dir: bool) -> AssetKind {
@@ -87,11 +114,11 @@ pub fn classify(name: &str, is_dir: bool) -> AssetKind {
     if lower.ends_with(".worldgen.json") {
         return AssetKind::WorldGen;
     }
-    if lower.ends_with(".buildings.json") {
-        return AssetKind::BuildingCatalog;
-    }
-    if lower.ends_with(".recipes.json") {
-        return AssetKind::RecipeCatalog;
+    // Plugin-registered asset suffixes (e.g. a game's catalogs).
+    for (suffix, name) in CUSTOM_KINDS.read().unwrap().iter() {
+        if lower.ends_with(suffix) {
+            return AssetKind::Custom(name);
+        }
     }
     // A sprite-frame library (named clips). `.spriteframes` is the user-facing
     // extension; `.frames.json` is still recognized for older assets.

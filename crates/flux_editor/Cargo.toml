@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 flux_core.workspace = true
+flux_game.workspace = true
 flux_runtime.workspace = true
 flux_icons.workspace = true
 flux_render.workspace = true

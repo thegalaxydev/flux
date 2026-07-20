@@ -106,14 +106,6 @@ fn is_camera(w: &World, id: InstanceId) -> bool {
     w.class_name(id) == Some("Camera2D")
 }
 
-fn is_building(w: &World, id: InstanceId) -> bool {
-    w.class_name(id) == Some("Building")
-}
-
-fn building_only(method: &str) -> mlua::Error {
-    mlua::Error::RuntimeError(format!("{method} can only be called on a Building"))
-}
-
 /// A camera's `(Position, Zoom)` for screen<->world conversion.
 fn camera_view(w: &World, id: InstanceId) -> (glam::Vec2, f32) {
     let pos = match w.get_prop(id, "Position") {
@@ -125,22 +117,6 @@ fn camera_view(w: &World, id: InstanceId) -> (glam::Vec2, f32) {
         _ => 1.0,
     };
     (pos, zoom)
-}
-
-/// Resolve a `Tilemap`'s `Buildings` catalog via the shared (Lua app-data) cache.
-fn catalog_of(
-    lua: &Lua,
-    w: &World,
-    id: InstanceId,
-) -> Option<std::rc::Rc<flux_core::building::BuildingCatalog>> {
-    let path = match w.get_prop(id, "Buildings") {
-        Some(Value::Asset(s)) if !s.is_empty() => s.clone(),
-        _ => return None,
-    };
-    let cache = crate::building_cache_handle(lua);
-    let root = crate::asset_root(lua);
-    let cat = cache.borrow_mut().get(&path, &root);
-    cat
 }
 
 /// A `Tilemap`'s footprint (`tile_width`, `tile_height`) and world `Position`.
@@ -187,6 +163,10 @@ impl UserData for LuaInstance {
             }
             if name == "SaveService" {
                 return crate::save::LuaSaveService.into_lua(lua);
+            }
+            // Plugin-registered services (e.g. a game's own service).
+            if let Some(result) = crate::lookup_service(lua, &name) {
+                return result;
             }
             match w.service(&name) {
                 Some(id) => LuaInstance(id).into_lua(lua),
@@ -449,135 +429,6 @@ impl UserData for LuaInstance {
             let (col, row) = flux_core::tilemap::world_to_tile(world_p - pos, tw, th);
             Ok((col, row))
         });
-        // ---- Tilemap building placement ----
-        m.add_method("CanPlace", |lua, this, (ty, col, row): (String, i32, i32)| {
-            let cat = {
-                let rc = world_handle(lua);
-                let w = rc.borrow();
-                check(&w, this.0)?;
-                if !is_tilemap(&w, this.0) {
-                    return Err(tilemap_only("CanPlace"));
-                }
-                match catalog_of(lua, &w, this.0) {
-                    Some(c) => c,
-                    None => return Ok(false),
-                }
-            };
-            let Some(def) = cat.get(&ty) else {
-                return Ok(false);
-            };
-            let rc = world_handle(lua);
-            let w = rc.borrow();
-            Ok(flux_core::building::can_place(&w, this.0, def, col, row))
-        });
-        m.add_method(
-            "PlaceBuilding",
-            |lua, this, (ty, col, row): (String, i32, i32)| {
-                let cat = {
-                    let rc = world_handle(lua);
-                    let w = rc.borrow();
-                    check(&w, this.0)?;
-                    if !is_tilemap(&w, this.0) {
-                        return Err(tilemap_only("PlaceBuilding"));
-                    }
-                    catalog_of(lua, &w, this.0).ok_or_else(|| {
-                        mlua::Error::RuntimeError(
-                            "PlaceBuilding: Tilemap has no Buildings catalog".to_string(),
-                        )
-                    })?
-                };
-                let def = cat.get(&ty).ok_or_else(|| {
-                    mlua::Error::RuntimeError(format!("PlaceBuilding: unknown building '{ty}'"))
-                })?;
-                let rc = world_handle(lua);
-                let mut w = rc.borrow_mut();
-                Ok(flux_core::building::place(&mut w, this.0, def, col, row).map(LuaInstance))
-            },
-        );
-        m.add_method("GetBuildingAt", |lua, this, (col, row): (i32, i32)| {
-            let rc = world_handle(lua);
-            let w = rc.borrow();
-            check(&w, this.0)?;
-            if !is_tilemap(&w, this.0) {
-                return Err(tilemap_only("GetBuildingAt"));
-            }
-            Ok(flux_core::building::building_at(&w, this.0, col, row).map(LuaInstance))
-        });
-        m.add_method("RemoveBuilding", |lua, this, (col, row): (i32, i32)| {
-            let rc = world_handle(lua);
-            let mut w = rc.borrow_mut();
-            check(&w, this.0)?;
-            if !is_tilemap(&w, this.0) {
-                return Err(tilemap_only("RemoveBuilding"));
-            }
-            Ok(flux_core::building::remove_at(&mut w, this.0, col, row))
-        });
-        m.add_method("GetPower", |lua, this, ()| {
-            let rc = world_handle(lua);
-            let w = rc.borrow();
-            check(&w, this.0)?;
-            if !is_tilemap(&w, this.0) {
-                return Err(tilemap_only("GetPower"));
-            }
-            let num = |name| match w.get_prop(this.0, name) {
-                Some(Value::Number(n)) => *n,
-                _ => 0.0,
-            };
-            // (produced, consumed) MW for this map's grid.
-            Ok((num("_PowerProduced"), num("_PowerConsumed")))
-        });
-        // ---- Building inventory ----
-        m.add_method("GetItem", |lua, this, item: String| {
-            let rc = world_handle(lua);
-            let w = rc.borrow();
-            check(&w, this.0)?;
-            if !is_building(&w, this.0) {
-                return Err(building_only("GetItem"));
-            }
-            Ok(w.inventory(this.0).map(|i| i.count(&item)).unwrap_or(0))
-        });
-        m.add_method("AddItem", |lua, this, (item, n): (String, u32)| {
-            let rc = world_handle(lua);
-            let mut w = rc.borrow_mut();
-            check(&w, this.0)?;
-            if !is_building(&w, this.0) {
-                return Err(building_only("AddItem"));
-            }
-            Ok(w.inventory_mut(this.0).map(|i| i.add(&item, n)).unwrap_or(0))
-        });
-        m.add_method("TakeItem", |lua, this, (item, n): (String, u32)| {
-            let rc = world_handle(lua);
-            let mut w = rc.borrow_mut();
-            check(&w, this.0)?;
-            if !is_building(&w, this.0) {
-                return Err(building_only("TakeItem"));
-            }
-            Ok(w.inventory_mut(this.0).map(|i| i.take(&item, n)).unwrap_or(0))
-        });
-        m.add_method("ItemTotal", |lua, this, ()| {
-            let rc = world_handle(lua);
-            let w = rc.borrow();
-            check(&w, this.0)?;
-            if !is_building(&w, this.0) {
-                return Err(building_only("ItemTotal"));
-            }
-            Ok(w.inventory(this.0).map(|i| i.total()).unwrap_or(0))
-        });
-        m.add_method("GetInventory", |lua, this, ()| {
-            let rc = world_handle(lua);
-            let w = rc.borrow();
-            check(&w, this.0)?;
-            if !is_building(&w, this.0) {
-                return Err(building_only("GetInventory"));
-            }
-            let table = lua.create_table()?;
-            if let Some(inv) = w.inventory(this.0) {
-                for (item, count) in inv.iter() {
-                    table.set(item, count)?;
-                }
-            }
-            Ok(table)
-        });
         // ---- Camera2D screen<->world conversion ----
         m.add_method("ScreenToWorld", |lua, this, v: LuaValue| {
             let rc = world_handle(lua);
@@ -675,6 +526,15 @@ fn index(lua: &Lua, id: InstanceId, key: &str) -> mlua::Result<LuaValue> {
                 value_to_lua(lua, &w, v)
             } else if let Some(child) = w.find_first_child(id, key) {
                 LuaInstance(child).into_lua(lua)
+            } else if crate::has_method(key) {
+                // A plugin-registered method: return a bound function so
+                // `obj:Method(...)` dispatches to the handler for this instance.
+                let name = key.to_string();
+                lua.create_function(move |lua, mut args: mlua::MultiValue| {
+                    let _self = args.pop_front(); // drop the implicit self
+                    crate::call_method(lua, &name, id, args)
+                })?
+                .into_lua(lua)
             } else {
                 Err(mlua::Error::RuntimeError(format!(
                     "{key} is not a valid member of {}",

@@ -606,10 +606,13 @@ fn drop_asset(state: &mut UiState, target: InstanceId, rel: &str) {
         AssetKind::Animation => ("AnimatedSprite", "Frames"),
         AssetKind::TileSet => ("Tilemap", "TileSet"),
         AssetKind::WorldGen => ("Tilemap", "WorldGen"),
-        AssetKind::BuildingCatalog => ("Tilemap", "Buildings"),
-        AssetKind::RecipeCatalog => ("Tilemap", "Recipes"),
         AssetKind::LuaModule => ("Module", "SourcePath"),
         AssetKind::LuaScript | AssetKind::Script => ("Script", "SourcePath"),
+        // Plugin asset types register their own drop targets.
+        AssetKind::Custom(name) => match flux_render::drop_target(name) {
+            Some(target) => target,
+            None => return,
+        },
         _ => return,
     };
     state.queue.push(Pending {

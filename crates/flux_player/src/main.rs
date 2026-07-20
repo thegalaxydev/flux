@@ -105,6 +105,9 @@ fn collect_input(ctx: &egui::Context, rect: egui::Rect) -> InputFrame {
 }
 
 fn main() -> eframe::Result {
+    // Install the reactor-game plugin (classes, systems, Lua API, …) before any
+    // world is created.
+    flux_game::install();
     let scene = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "projects/demo/main.scene.json".to_string());

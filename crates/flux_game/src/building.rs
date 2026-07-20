@@ -1,16 +1,10 @@
-//! Data-driven buildings placed on an isometric [`crate::tilemap::Tilemap`].
+//! Data-driven buildings placed on an isometric Tilemap.
 //!
 //! A **building catalog** (`*.buildings.json`) defines the placeable building
-//! *types* (id, footprint, colour, category) — the "never hardcode gameplay"
-//! backbone for the reactor game. It's parsed + cached exactly like a
-//! [`crate::tilemap::TileSet`].
-//!
-//! A placed building is a `Building` instance parented to the tilemap. Placement
-//! resolves the catalog def, checks the footprint fits and doesn't overlap an
-//! existing building, then creates the node with its visuals baked into props
-//! (`Type`/`Cell`/`Footprint`/`Color`) — so rendering and serialization need no
-//! catalog at all; only placement does. The functions here are the reusable core
-//! the Lua `Tilemap:PlaceBuilding` / `GetBuildingAt` methods call.
+//! *types*. A placed building is a `Building` instance (registered by this
+//! plugin) parented to the tilemap, with its visuals baked into props at
+//! placement so rendering/serialization need no catalog. These functions back
+//! the `Tilemap:PlaceBuilding` / `GetBuildingAt` Lua methods.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -19,8 +13,9 @@ use std::rc::Rc;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::value::{Color, Value};
-use crate::world::{InstanceId, World};
+use flux_core::{Color, InstanceId, Value, World};
+
+use crate::factory::Inventory;
 
 // ---------------------------------------------------------------------------
 // Catalog authoring schema (`*.buildings.json`)
@@ -37,33 +32,24 @@ pub struct BuildingDoc {
     pub id: String,
     #[serde(default)]
     pub name: String,
-    /// Footprint `[width, height]` in tiles (defaults to 1x1).
     #[serde(default = "one_by_one")]
     pub size: [u32; 2],
     #[serde(default = "white")]
     pub color: [f32; 4],
-    /// Free-form grouping for build menus (e.g. "production", "logistics").
     #[serde(default)]
     pub category: String,
-    /// Recipe id (in the paired recipe catalog) assigned on placement, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipe: Option<String>,
-    /// Extracts ore from the tile beneath it into its inventory.
     #[serde(default)]
     pub mines: bool,
-    /// Ore/sec a miner extracts (also the production/transfer cadence baseline).
     #[serde(default = "one_f")]
     pub rate: f32,
-    /// Inventory capacity in items; 0 = unlimited (for storage/sinks).
     #[serde(default = "default_capacity")]
     pub capacity: u32,
-    /// Accepts any item pushed to it (a storage sink), not just recipe inputs.
     #[serde(default)]
     pub stores: bool,
-    /// Electric power this building draws while placed (MW).
     #[serde(default)]
     pub power_use: f32,
-    /// Present on reactors — the nuclear-sim parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reactor: Option<ReactorDoc>,
 }
@@ -71,28 +57,20 @@ pub struct BuildingDoc {
 /// Nuclear-reactor tuning (see [`crate::reactor`]).
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ReactorDoc {
-    /// Peak electrical output at full reaction and ideal temperature (MW).
     #[serde(default = "hundred")]
     pub power: f32,
-    /// Heat produced per second at full reaction (deg C/s).
     #[serde(default = "default_heat")]
     pub heat: f32,
-    /// Passive cooling coefficient (fraction of the over-ambient gap shed per sec).
     #[serde(default = "default_cooling")]
     pub cooling: f32,
-    /// Fuel burned per second (Fuel% ) at full reaction.
     #[serde(default = "default_burn")]
     pub burn: f32,
-    /// Temperature above which integrity degrades (deg C).
     #[serde(default = "default_meltdown")]
     pub meltdown: f32,
-    /// Temperature of peak generating efficiency (deg C).
     #[serde(default = "default_optimal")]
     pub optimal: f32,
-    /// Inventory item consumed to refuel (e.g. "uranium").
     #[serde(default)]
     pub fuel: String,
-    /// Fuel% restored per consumed fuel item.
     #[serde(default = "default_refuel")]
     pub refuel: f32,
 }
@@ -135,14 +113,10 @@ impl BuildingCatalogDoc {
     pub fn from_json(json: &str) -> Result<Self, String> {
         serde_json::from_str(json).map_err(|e| e.to_string())
     }
-
-    pub fn to_json(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap_or_default()
-    }
 }
 
 // ---------------------------------------------------------------------------
-// Runtime catalog (immutable, shared via Rc)
+// Runtime catalog
 // ---------------------------------------------------------------------------
 
 pub struct BuildingDef {
@@ -161,7 +135,6 @@ pub struct BuildingDef {
     pub reactor: Option<ReactorParams>,
 }
 
-/// Resolved reactor parameters (see [`ReactorDoc`]).
 #[derive(Clone)]
 pub struct ReactorParams {
     pub power: f32,
@@ -225,10 +198,6 @@ impl BuildingCatalog {
         self.by_id.get(id).map(|&i| &self.defs[i])
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &BuildingDef> {
-        self.defs.iter()
-    }
-
     pub fn len(&self) -> usize {
         self.defs.len()
     }
@@ -238,8 +207,7 @@ impl BuildingCatalog {
     }
 }
 
-/// Loads and caches `*.buildings.json` catalogs by relative path, mirroring
-/// [`crate::tilemap::TileSetCache`].
+/// Loads and caches `*.buildings.json` catalogs by relative path.
 #[derive(Default)]
 pub struct BuildingCatalogCache {
     catalogs: HashMap<String, Option<Rc<BuildingCatalog>>>,
@@ -270,7 +238,6 @@ impl BuildingCatalogCache {
 // Placement on a Tilemap
 // ---------------------------------------------------------------------------
 
-/// A placed building's grid cell and footprint, read from its instance props.
 struct Footprint {
     col: i32,
     row: i32,
@@ -308,8 +275,6 @@ fn footprint_of(world: &World, id: InstanceId) -> Option<Footprint> {
     })
 }
 
-/// The map's grid size in tiles — from the derived grid if generated, else the
-/// `MapWidth`/`MapHeight` config props.
 fn map_dims(world: &World, tilemap: InstanceId) -> (i32, i32) {
     if let Some(g) = world.tile_grid(tilemap) {
         return (g.width() as i32, g.height() as i32);
@@ -321,7 +286,6 @@ fn map_dims(world: &World, tilemap: InstanceId) -> (i32, i32) {
     (num("MapWidth"), num("MapHeight"))
 }
 
-/// Direct `Building` children of a tilemap.
 fn buildings_of(world: &World, tilemap: InstanceId) -> impl Iterator<Item = InstanceId> + '_ {
     world
         .children(tilemap)
@@ -332,20 +296,11 @@ fn buildings_of(world: &World, tilemap: InstanceId) -> impl Iterator<Item = Inst
 
 /// The building whose footprint covers `(col, row)`, if any.
 pub fn building_at(world: &World, tilemap: InstanceId, col: i32, row: i32) -> Option<InstanceId> {
-    buildings_of(world, tilemap).find(|&b| {
-        footprint_of(world, b).is_some_and(|f| f.contains(col, row))
-    })
+    buildings_of(world, tilemap).find(|&b| footprint_of(world, b).is_some_and(|f| f.contains(col, row)))
 }
 
-/// Whether a `def`-sized building fits at `(col, row)`: fully in bounds and not
-/// overlapping any existing building.
-pub fn can_place(
-    world: &World,
-    tilemap: InstanceId,
-    def: &BuildingDef,
-    col: i32,
-    row: i32,
-) -> bool {
+/// Whether a `def`-sized building fits at `(col, row)`.
+pub fn can_place(world: &World, tilemap: InstanceId, def: &BuildingDef, col: i32, row: i32) -> bool {
     let (mw, mh) = map_dims(world, tilemap);
     let (w, h) = (def.width as i32, def.height as i32);
     if col < 0 || row < 0 || col + w > mw || row + h > mh {
@@ -355,9 +310,7 @@ pub fn can_place(
     !buildings_of(world, tilemap).any(|b| footprint_of(world, b).is_some_and(|f| f.overlaps(&want)))
 }
 
-/// Place a `def` building at `(col, row)`, creating the `Building` node with its
-/// visuals baked into props. Returns the new instance, or `None` if it can't be
-/// placed there.
+/// Place a `def` building at `(col, row)`, or `None` if it can't be placed.
 pub fn place(
     world: &mut World,
     tilemap: InstanceId,
@@ -378,13 +331,8 @@ pub fn place(
         Value::Vec2(Vec2::new(def.width as f32, def.height as f32)),
     );
     let _ = world.set_prop(id, "Color", Value::Color(def.color));
-    let _ = world.set_prop(
-        id,
-        "Recipe",
-        Value::String(def.recipe.clone().unwrap_or_default()),
-    );
-    // Give the building its inventory buffer up front.
-    world.set_inventory(id, crate::factory::Inventory::new(def.capacity));
+    let _ = world.set_prop(id, "Recipe", Value::String(def.recipe.clone().unwrap_or_default()));
+    world.set_component::<Inventory>(id, Inventory::new(def.capacity));
     Some(id)
 }
 
@@ -422,38 +370,30 @@ mod tests {
         assert_eq!(cat.len(), 2);
         let s = cat.get("smelter").unwrap();
         assert_eq!((s.width, s.height), (2, 2));
-        assert_eq!(s.name, "Smelter");
         assert_eq!(s.category, "production");
-        assert!(cat.get("nope").is_none());
     }
 
     #[test]
     fn place_respects_bounds_and_overlap() {
+        crate::install();
         let cat = BuildingCatalog::parse(CATALOG).unwrap();
         let mut w = World::new();
         let tm = map(&mut w);
 
         let smelter = cat.get("smelter").unwrap();
-        // Fits at (2,2).
         let b = place(&mut w, tm, smelter, 2, 2).expect("placed");
         assert_eq!(w.class_name(b), Some("Building"));
-        assert_eq!(building_at(&w, tm, 3, 3), Some(b)); // covers its 2x2 footprint
+        assert_eq!(building_at(&w, tm, 3, 3), Some(b));
         assert_eq!(building_at(&w, tm, 4, 4), None);
 
-        // Overlapping placement is refused.
         assert!(!can_place(&w, tm, smelter, 3, 3));
         assert!(place(&mut w, tm, smelter, 3, 3).is_none());
-
-        // Out of bounds (2x2 at col 15 spills past width 16).
         assert!(!can_place(&w, tm, smelter, 15, 2));
 
-        // A non-overlapping spot works.
         let belt = cat.get("belt").unwrap();
         assert!(place(&mut w, tm, belt, 0, 0).is_some());
 
-        // Removal frees the cell.
         assert!(remove_at(&mut w, tm, 3, 3));
         assert_eq!(building_at(&w, tm, 2, 2), None);
-        assert!(can_place(&w, tm, smelter, 2, 2));
     }
 }

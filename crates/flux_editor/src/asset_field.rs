@@ -29,8 +29,7 @@ pub fn accepts(expected: AssetType, path: &str) -> bool {
         AssetType::SpriteFrames => kind == AssetKind::Animation,
         AssetType::TileSet => kind == AssetKind::TileSet,
         AssetType::WorldGen => kind == AssetKind::WorldGen,
-        AssetType::BuildingCatalog => kind == AssetKind::BuildingCatalog,
-        AssetType::RecipeCatalog => kind == AssetKind::RecipeCatalog,
+        AssetType::Custom(n) => kind == AssetKind::Custom(n),
         AssetType::Script => {
             matches!(
                 kind,

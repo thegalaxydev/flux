@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
 use glam::Vec2;
 
@@ -17,13 +17,14 @@ pub enum AssetType {
     SpriteFrames,
     TileSet,
     WorldGen,
-    BuildingCatalog,
-    RecipeCatalog,
     Script,
     Audio,
     Material,
     Scene,
     Any,
+    /// A plugin-defined asset type, matched by name against a
+    /// [`crate::AssetKind`]-equivalent the plugin registers in the editor.
+    Custom(&'static str),
 }
 
 #[derive(Clone, Debug)]
@@ -38,7 +39,7 @@ pub struct PropDef {
     pub asset: Option<AssetType>,
 }
 
-fn prop(name: &'static str, default: Value) -> PropDef {
+pub fn prop(name: &'static str, default: Value) -> PropDef {
     PropDef {
         name,
         ty: default.ty(),
@@ -49,7 +50,7 @@ fn prop(name: &'static str, default: Value) -> PropDef {
 }
 
 /// A transient property — see [`PropDef::transient`].
-fn prop_t(name: &'static str, default: Value) -> PropDef {
+pub fn prop_t(name: &'static str, default: Value) -> PropDef {
     PropDef {
         transient: true,
         ..prop(name, default)
@@ -57,7 +58,7 @@ fn prop_t(name: &'static str, default: Value) -> PropDef {
 }
 
 /// A typed asset-reference property (empty by default).
-fn asset_prop(name: &'static str, kind: AssetType) -> PropDef {
+pub fn asset_prop(name: &'static str, kind: AssetType) -> PropDef {
     PropDef {
         asset: Some(kind),
         ..prop(name, Value::Asset(String::new()))
@@ -101,7 +102,10 @@ impl ClassRegistry {
         self.classes.iter().filter(|c| c.creatable)
     }
 
-    fn add(
+    /// Register a class. Plugins call this on the builder returned by
+    /// [`ClassRegistry::builtins`] before [`install`]. Props are inherited from
+    /// `superclass` (which must already be registered).
+    pub fn add(
         &mut self,
         name: &'static str,
         superclass: Option<&str>,
@@ -125,7 +129,19 @@ impl ClassRegistry {
         self.by_name.insert(name, id);
     }
 
-    fn build() -> Self {
+    /// Append extra properties to an already-registered class (e.g. a plugin
+    /// adding fields to a built-in). Does not retroactively affect subclasses
+    /// registered earlier, so extend a class before adding classes that derive
+    /// from it. No-op for an unknown class.
+    pub fn extend(&mut self, class: &str, extra_props: Vec<PropDef>) {
+        if let Some(&id) = self.by_name.get(class) {
+            self.classes[id.0].props.extend(extra_props);
+        }
+    }
+
+    /// The engine's built-in classes, as a mutable builder a plugin can `add`/
+    /// `extend` before calling [`install`].
+    pub fn builtins() -> Self {
         let mut reg = Self {
             classes: Vec::new(),
             by_name: HashMap::new(),
@@ -236,45 +252,11 @@ impl ClassRegistry {
             vec![
                 asset_prop("TileSet", AssetType::TileSet),
                 asset_prop("WorldGen", AssetType::WorldGen),
-                asset_prop("Buildings", AssetType::BuildingCatalog),
-                asset_prop("Recipes", AssetType::RecipeCatalog),
                 prop("TileWidth", Value::Number(64.0)),
                 prop("TileHeight", Value::Number(32.0)),
                 prop("MapWidth", Value::Number(64.0)),
                 prop("MapHeight", Value::Number(64.0)),
                 prop("Seed", Value::Number(0.0)),
-                // Power balance for this map's grid, updated by the reactor sim.
-                prop_t("_PowerProduced", Value::Number(0.0)),
-                prop_t("_PowerConsumed", Value::Number(0.0)),
-            ],
-        );
-        // A building placed on a Tilemap grid. Visuals are baked into props at
-        // placement time (see `crate::building`), so rendering/serialization need
-        // no catalog. `Cell` is (col, row); `Footprint` is (width, height) tiles.
-        reg.add(
-            "Building",
-            Some("Node2D"),
-            true,
-            false,
-            vec![
-                prop("Type", Value::String(String::new())),
-                prop("Cell", Value::Vec2(Vec2::ZERO)),
-                prop("Footprint", Value::Vec2(Vec2::ONE)),
-                prop("Color", Value::Color(Color::WHITE)),
-                // Assigned crafting recipe (empty = none). Sim state below is
-                // transient (never serialized): craft timer, mine + flow accumulators.
-                prop("Recipe", Value::String(String::new())),
-                prop_t("_Timer", Value::Number(0.0)),
-                prop_t("_MineT", Value::Number(0.0)),
-                prop_t("_Flow", Value::Number(0.0)),
-                // Reactor state (meaningful only on reactor buildings; serialized
-                // so a running reactor's state survives a save). ControlRods:
-                // 1 = fully inserted (off/safe), 0 = withdrawn (full power).
-                prop("Temperature", Value::Number(20.0)),
-                prop("Fuel", Value::Number(0.0)),
-                prop("ControlRods", Value::Number(1.0)),
-                prop("Integrity", Value::Number(100.0)),
-                prop("PowerOutput", Value::Number(0.0)),
             ],
         );
         // The 2D camera. `Position`/`Zoom` are the live view; the rest configure
@@ -382,8 +364,17 @@ impl ClassRegistry {
     }
 }
 
-static REGISTRY: LazyLock<ClassRegistry> = LazyLock::new(ClassRegistry::build);
+static REGISTRY: OnceLock<ClassRegistry> = OnceLock::new();
 
+/// Install the class registry for the process. Apps that load plugins build it
+/// from [`ClassRegistry::builtins`] (plus plugin `add`/`extend` calls) and
+/// install it once, before any world is created. Later calls are ignored.
+pub fn install(registry: ClassRegistry) {
+    let _ = REGISTRY.set(registry);
+}
+
+/// The installed class registry, lazily falling back to engine built-ins only
+/// (so engine-only tools and tests work without an explicit [`install`]).
 pub fn registry() -> &'static ClassRegistry {
-    &REGISTRY
+    REGISTRY.get_or_init(ClassRegistry::builtins)
 }

@@ -26,6 +26,8 @@ use app::EditorApp;
 use launcher::{LaunchAction, Launcher, Recents};
 
 fn main() -> eframe::Result {
+    // Install the reactor-game plugin before any world is created.
+    flux_game::install();
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--write-demo") {
         let path = args

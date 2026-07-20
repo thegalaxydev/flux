@@ -1,11 +1,9 @@
 pub mod animation;
-pub mod building;
 pub mod camera;
 mod class;
-pub mod factory;
-pub mod reactor;
 mod error;
 pub mod gui;
+pub mod save;
 mod serialize;
 mod subtree;
 pub mod tilemap;
@@ -13,7 +11,10 @@ pub mod transform;
 mod value;
 mod world;
 
-pub use class::{AssetType, ClassId, ClassInfo, ClassRegistry, PropDef, registry};
+pub use class::{
+    AssetType, ClassId, ClassInfo, ClassRegistry, PropDef, asset_prop, install, prop, prop_t,
+    registry,
+};
 pub use error::CoreError;
 pub use gui::Rect2;
 pub use serialize::SCENE_VERSION;

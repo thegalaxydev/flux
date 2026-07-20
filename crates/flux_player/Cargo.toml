@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+flux_game.workspace = true
 flux_runtime.workspace = true
 flux_view.workspace = true
 eframe = "0.32"

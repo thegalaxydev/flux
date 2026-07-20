@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::class::registry;
 use crate::error::CoreError;
-use crate::factory::Inventory;
 use crate::tilemap::{self, Cell};
 use crate::value::{Color, Rect, UDim2, Value};
 use crate::world::{InstanceId, World};
@@ -30,18 +29,12 @@ struct SavedInstance {
     /// so runtime edits (mining, terraforming) survive a reload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tiles: Option<SavedTiles>,
-    /// A `Building`'s item inventory — save-games only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    inventory: Option<SavedInventory>,
+    /// Plugin component data (save-games only), keyed by the component name a
+    /// plugin registered with [`crate::save::register_component`].
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    components: IndexMap<String, serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     children: Vec<SavedInstance>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedInventory {
-    cap: u32,
-    #[serde(default)]
-    items: Vec<(String, u32)>,
 }
 
 /// A tile grid as run-length-encoded cells, keeping big maps compact.
@@ -148,7 +141,7 @@ impl World {
         let mut refs: HashMap<u64, InstanceId> = HashMap::new();
         let mut fixups: Vec<(InstanceId, &'static str, u64)> = Vec::new();
         let mut tiles: Vec<(InstanceId, SavedTiles)> = Vec::new();
-        let mut invs: Vec<(InstanceId, SavedInventory)> = Vec::new();
+        let mut comps: Vec<(InstanceId, IndexMap<String, serde_json::Value>)> = Vec::new();
         let root = world.root();
         load_instance(
             &mut world,
@@ -157,7 +150,7 @@ impl World {
             &mut refs,
             &mut fixups,
             &mut tiles,
-            &mut invs,
+            &mut comps,
         )?;
         for (id, prop, serial) in fixups {
             let target = refs
@@ -172,8 +165,8 @@ impl World {
             let cells = rle_decode(&t);
             tilemap::restore(&mut world, id, t.w, t.h, cells);
         }
-        for (id, inv) in invs {
-            world.set_inventory(id, Inventory::from_pairs(inv.cap, inv.items));
+        for (id, c) in &comps {
+            crate::save::load_components(&mut world, *id, c);
         }
         // Convert legacy Sprite + AnimationPlayer pairs to AnimatedSprite.
         migrate_legacy_animation(&mut world);
@@ -210,13 +203,10 @@ fn save_instance(
     } else {
         None
     };
-    let inventory = if include_tiles && info.name == "Building" {
-        world.inventory(id).map(|inv| SavedInventory {
-            cap: inv.capacity(),
-            items: inv.iter().map(|(k, v)| (k.to_string(), v)).collect(),
-        })
+    let components = if include_tiles {
+        crate::save::save_components(world, id)
     } else {
-        None
+        IndexMap::new()
     };
     SavedInstance {
         class: info.name.to_string(),
@@ -224,7 +214,7 @@ fn save_instance(
         ref_id: ref_ids.get(&id).copied(),
         props,
         tiles,
-        inventory,
+        components,
         children: world
             .children(id)
             .iter()
@@ -254,7 +244,7 @@ fn load_instance(
     refs: &mut HashMap<u64, InstanceId>,
     fixups: &mut Vec<(InstanceId, &'static str, u64)>,
     tiles: &mut Vec<(InstanceId, SavedTiles)>,
-    invs: &mut Vec<(InstanceId, SavedInventory)>,
+    comps: &mut Vec<(InstanceId, IndexMap<String, serde_json::Value>)>,
 ) -> Result<(), CoreError> {
     world.set_name_raw(id, saved.name.clone());
     if let Some(r) = saved.ref_id {
@@ -274,15 +264,15 @@ fn load_instance(
     if let Some(t) = &saved.tiles {
         tiles.push((id, SavedTiles { w: t.w, h: t.h, runs: t.runs.clone() }));
     }
-    if let Some(inv) = &saved.inventory {
-        invs.push((id, SavedInventory { cap: inv.cap, items: inv.items.clone() }));
+    if !saved.components.is_empty() {
+        comps.push((id, saved.components.clone()));
     }
     for child in &saved.children {
         let cclass = registry()
             .find(resolve_legacy_class(&child.class))
             .ok_or_else(|| CoreError::UnknownClass(child.class.clone()))?;
         let cid = world.spawn_raw(cclass, id);
-        load_instance(world, child, cid, refs, fixups, tiles, invs)?;
+        load_instance(world, child, cid, refs, fixups, tiles, comps)?;
     }
     Ok(())
 }
@@ -379,7 +369,6 @@ mod save_tests {
     use crate::tilemap::{self, TileSetCache, WorldGenCache};
     use crate::value::Value;
     use crate::world::World;
-    use glam::Vec2;
     use std::path::Path;
 
     fn tilemap_of(w: &World) -> crate::world::InstanceId {
@@ -390,7 +379,7 @@ mod save_tests {
     }
 
     #[test]
-    fn save_round_trips_tiles_and_buildings_but_scene_json_omits_tiles() {
+    fn save_round_trips_tilemap_grid_but_scene_json_omits_it() {
         let mut w = World::new();
         let tm = w.create("Tilemap", w.workspace()).unwrap();
         w.set_prop(tm, "MapWidth", Value::Number(8.0)).unwrap();
@@ -401,12 +390,8 @@ mod save_tests {
         // Runtime edits to the grid.
         w.tile_grid_mut(tm).unwrap().set_tile(0, 0, 5);
         w.tile_grid_mut(tm).unwrap().set_ore(1, 1, 3, 250);
-        // A placed building.
-        let b = w.create("Building", tm).unwrap();
-        w.set_prop(b, "Type", Value::String("smelter".into())).unwrap();
-        w.set_prop(b, "Cell", Value::Vec2(Vec2::new(2.0, 2.0))).unwrap();
 
-        // Scene JSON stays lean; the save carries the grid.
+        // Scene JSON stays lean; only the save carries the grid.
         assert!(!w.to_json().contains("\"tiles\""));
         let save = w.to_save_string();
         assert!(save.contains("\"tiles\""));
@@ -418,15 +403,6 @@ mod save_tests {
             assert_eq!(g.get(0, 0), Some(5));
             assert_eq!(g.cell(1, 1).unwrap().ore_amount, 250);
         }
-        let building = w2
-            .descendants(tm2)
-            .into_iter()
-            .find(|&id| w2.class_name(id) == Some("Building"))
-            .expect("building restored");
-        assert_eq!(
-            w2.get_prop(building, "Type"),
-            Some(&Value::String("smelter".into()))
-        );
 
         // A fresh sync must NOT wipe the restored grid (signature matches config).
         tilemap::sync(&mut w2, &mut ts, &mut wg, Path::new("."));

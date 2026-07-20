@@ -4,6 +4,7 @@ members = ["crates/*"]
 
 [workspace.dependencies]
 flux_core = { path = "crates/flux_core" }
+flux_game = { path = "crates/flux_game" }
 flux_render = { path = "crates/flux_render" }
 flux_script = { path = "crates/flux_script" }
 flux_runtime = { path = "crates/flux_runtime" }
