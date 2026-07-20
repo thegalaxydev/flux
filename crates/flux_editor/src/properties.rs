@@ -82,11 +82,18 @@ fn asset_row(
     match asset_field(ui, cur, expected, root, icons) {
         AssetFieldAction::Assign(path) => set(state, path),
         AssetFieldAction::Clear => set(state, String::new()),
-        AssetFieldAction::Open => match expected {
+        AssetFieldAction::Open if !cur.is_empty() => match expected {
             AssetType::Script => state.open_script = Some((cur.to_string(), None)),
             AssetType::SpriteFrames => state.open_animation = Some(cur.to_string()),
-            _ => {}
+            // No dedicated viewer (textures, materials, audio): reveal the file
+            // in the Assets panel by browsing to its containing folder.
+            _ => {
+                let dir = cur.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+                state.asset_dir = std::path::PathBuf::from(dir);
+                state.status = format!("Revealed {cur} in Assets");
+            }
         },
+        AssetFieldAction::Open => {}
         AssetFieldAction::None => {}
     }
 }
