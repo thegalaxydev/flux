@@ -79,6 +79,26 @@ pub(crate) fn install() {
             .into_lua_multi(lua)
     });
 
+    api::register_method("BuildingTypes", |lua, id, args| {
+        <()>::from_lua_multi(args, lua)?;
+        let rc = api::world(lua);
+        let w = rc.borrow();
+        if !is_tilemap(&w, id) {
+            return Err(err("BuildingTypes can only be called on a Tilemap"));
+        }
+        let list = lua.create_table()?;
+        if let Some(cat) = catalog_of(lua, &w, id) {
+            for def in cat.defs() {
+                let entry = lua.create_table()?;
+                entry.set("id", def.id.clone())?;
+                entry.set("name", def.name.clone())?;
+                entry.set("category", def.category.clone())?;
+                list.push(entry)?;
+            }
+        }
+        list.into_lua_multi(lua)
+    });
+
     api::register_method("GetBuildingAt", |lua, id, args| {
         let (col, row) = <(i32, i32)>::from_lua_multi(args, lua)?;
         let rc = api::world(lua);

@@ -198,6 +198,11 @@ impl BuildingCatalog {
         self.by_id.get(id).map(|&i| &self.defs[i])
     }
 
+    /// All building defs, in catalog order (for build menus).
+    pub fn defs(&self) -> impl Iterator<Item = &BuildingDef> {
+        self.defs.iter()
+    }
+
     pub fn len(&self) -> usize {
         self.defs.len()
     }
