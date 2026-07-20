@@ -1,8 +1,9 @@
 use indexmap::IndexMap;
-use slotmap::SlotMap;
+use slotmap::{SecondaryMap, SlotMap};
 
 use crate::class::{ClassId, registry};
 use crate::error::CoreError;
+use crate::tilemap::TileGrid;
 use crate::value::Value;
 
 slotmap::new_key_type! {
@@ -20,6 +21,11 @@ pub(crate) struct Instance {
 pub struct World {
     pub(crate) instances: SlotMap<InstanceId, Instance>,
     pub(crate) root: InstanceId,
+    /// Derived per-`Tilemap` grid data, keyed by instance. Transient — never
+    /// serialized; regenerated from each tilemap's config by
+    /// [`crate::tilemap::sync`]. See the tilemap module for why the grid lives
+    /// on the world rather than in the scene tree.
+    tilemaps: SecondaryMap<InstanceId, TileGrid>,
 }
 
 impl World {
@@ -39,7 +45,11 @@ impl World {
             children: Vec::new(),
             props,
         });
-        Self { instances, root }
+        Self {
+            instances,
+            root,
+            tilemaps: SecondaryMap::new(),
+        }
     }
 
     pub fn new() -> Self {
@@ -115,6 +125,7 @@ impl World {
         }
         let mut stack = vec![id];
         while let Some(cur) = stack.pop() {
+            self.tilemaps.remove(cur);
             if let Some(inst) = self.instances.remove(cur) {
                 stack.extend(inst.children);
             }
@@ -179,6 +190,20 @@ impl World {
         }
         *slot = value;
         Ok(())
+    }
+
+    /// The derived tile grid for a `Tilemap` instance, if [`crate::tilemap::sync`]
+    /// has generated one.
+    pub fn tile_grid(&self, id: InstanceId) -> Option<&TileGrid> {
+        self.tilemaps.get(id)
+    }
+
+    /// Store (or replace) a tilemap's derived grid. Only meaningful for live
+    /// `Tilemap` instances; used by [`crate::tilemap::sync`].
+    pub(crate) fn set_tile_grid(&mut self, id: InstanceId, grid: TileGrid) {
+        if self.instances.contains_key(id) {
+            self.tilemaps.insert(id, grid);
+        }
     }
 
     pub fn root(&self) -> InstanceId {

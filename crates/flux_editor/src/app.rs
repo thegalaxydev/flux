@@ -105,6 +105,8 @@ pub struct EditorApp {
     anim: crate::animation_editor::AnimationEditor,
     /// Shared clip-library cache for drawing AnimatedSprites in edit mode.
     anim_cache: flux_core::animation::AnimationCache,
+    /// Shared tileset cache for drawing Tilemaps in edit mode.
+    tile_cache: flux_core::tilemap::TileSetCache,
     play: Option<Session>,
     logs: Vec<LogEntry>,
     path: Option<PathBuf>,
@@ -144,6 +146,7 @@ impl EditorApp {
             editor: ScriptEditor::default(),
             anim: crate::animation_editor::AnimationEditor::default(),
             anim_cache: Default::default(),
+            tile_cache: Default::default(),
             play: None,
             logs: Vec::new(),
             path,
@@ -544,6 +547,7 @@ impl EditorApp {
         self.logs.clear();
         self.textures.clear();
         self.anim_cache.clear();
+        self.tile_cache.clear();
         self.editor.clear();
         self.anim = crate::animation_editor::AnimationEditor::default();
     }
@@ -1334,6 +1338,9 @@ impl eframe::App for EditorApp {
             self.textures.poll_hot_reload(ctx, &root);
         }
         self.step_play(ctx);
+        // Keep the edit-world's tilemap grids current (cheap when unchanged).
+        // The play session syncs its own world in `Session::step`.
+        flux_core::tilemap::sync(&mut self.world);
         self.handle_shortcuts(ctx);
         self.menu_bar(ctx);
         self.toolbar(ctx);
@@ -1351,6 +1358,7 @@ impl eframe::App for EditorApp {
                 icons,
                 textures,
                 anim_cache,
+                tile_cache,
                 editor,
                 settings,
                 ..
@@ -1400,6 +1408,7 @@ impl eframe::App for EditorApp {
                             root.as_deref(),
                             textures,
                             anim_cache,
+                            tile_cache,
                         );
                     }
                     ActiveTab::Script(i) => {

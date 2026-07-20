@@ -59,6 +59,8 @@ pub enum AssetKind {
     Scene,
     Material,
     Animation,
+    /// A `*.tileset.json` tile palette for a `Tilemap`.
+    TileSet,
     Prefab,
     Package,
     Font,
@@ -72,6 +74,9 @@ pub fn classify(name: &str, is_dir: bool) -> AssetKind {
     let lower = name.to_ascii_lowercase();
     if lower.ends_with(".scene.json") {
         return AssetKind::Scene;
+    }
+    if lower.ends_with(".tileset.json") {
+        return AssetKind::TileSet;
     }
     // A sprite-frame library (named clips). `.spriteframes` is the user-facing
     // extension; `.frames.json` is still recognized for older assets.

@@ -129,6 +129,7 @@ fn node_for_asset(rel: &str) -> Option<(&'static str, &'static str)> {
     match flux_render::classify(file, false) {
         flux_render::AssetKind::Image => Some(("Sprite", "Texture")),
         flux_render::AssetKind::Animation => Some(("AnimatedSprite", "Frames")),
+        flux_render::AssetKind::TileSet => Some(("Tilemap", "TileSet")),
         _ => None,
     }
 }
@@ -156,6 +157,7 @@ pub fn show(
     root: Option<&Path>,
     textures: &mut TextureCache,
     anim: &mut flux_core::animation::AnimationCache,
+    tiles: &mut flux_view::TileSetCache,
 ) {
     let (response, painter) =
         ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
@@ -223,6 +225,7 @@ pub fn show(
         world,
         textures,
         anim,
+        tiles,
         rect,
         camera,
         root,

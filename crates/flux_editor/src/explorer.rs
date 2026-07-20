@@ -604,6 +604,7 @@ fn drop_asset(state: &mut UiState, target: InstanceId, rel: &str) {
     let (class, prop) = match classify(file, false) {
         AssetKind::Image => ("Sprite", "Texture"),
         AssetKind::Animation => ("AnimatedSprite", "Frames"),
+        AssetKind::TileSet => ("Tilemap", "TileSet"),
         AssetKind::LuaModule => ("Module", "SourcePath"),
         AssetKind::LuaScript | AssetKind::Script => ("Script", "SourcePath"),
         _ => return,

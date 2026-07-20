@@ -15,6 +15,7 @@ pub struct ClassId(usize);
 pub enum AssetType {
     Texture,
     SpriteFrames,
+    TileSet,
     Script,
     Audio,
     Material,
@@ -219,6 +220,23 @@ impl ClassRegistry {
                 prop_t("TimePosition", Value::Number(0.0)),
                 prop_t("CurrentFrame", Value::Number(0.0)),
                 prop_t("Playing", Value::Bool(false)),
+            ],
+        );
+        // An isometric tilemap. Stores only config; the per-cell grid is derived
+        // from `Seed` + dimensions and held in a transient world side-table (see
+        // `crate::tilemap`), so it never bloats the scene file.
+        reg.add(
+            "Tilemap",
+            Some("Node2D"),
+            true,
+            false,
+            vec![
+                asset_prop("TileSet", AssetType::TileSet),
+                prop("TileWidth", Value::Number(64.0)),
+                prop("TileHeight", Value::Number(32.0)),
+                prop("MapWidth", Value::Number(64.0)),
+                prop("MapHeight", Value::Number(64.0)),
+                prop("Seed", Value::Number(0.0)),
             ],
         );
         reg.add(

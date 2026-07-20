@@ -9,6 +9,7 @@ use flux_core::transform::SpriteXform;
 use flux_core::{ClassId, Color, InstanceId, Rect as SrcRect, Value, World, registry};
 
 pub use flux_core::animation::AnimationCache;
+pub use flux_core::tilemap::TileSetCache;
 pub use texture::TextureCache;
 
 /// Screen rect (top-left based) the GUI layer is laid out inside, as a [`Rect2`].
@@ -89,6 +90,7 @@ pub fn draw_scene(
     world: &World,
     textures: &mut TextureCache,
     anim: &mut flux_core::animation::AnimationCache,
+    tiles: &mut TileSetCache,
     rect: Rect,
     camera: Camera,
     root: Option<&Path>,
@@ -99,14 +101,14 @@ pub fn draw_scene(
     let origin = rect.center();
     let to_screen = |x: f32, y: f32| origin + (egui::vec2(x, y) - camera.offset) * camera.zoom;
 
-    // Both Sprites and AnimatedSprites render as textured quads, ordered by ZIndex.
+    // Tilemaps, Sprites and AnimatedSprites all render here, ordered by ZIndex.
     let mut nodes: Vec<(InstanceId, f64)> = world
         .descendants(world.workspace())
         .into_iter()
         .filter(|&id| {
             matches!(
                 world.class_name(id),
-                Some("Sprite") | Some("AnimatedSprite")
+                Some("Sprite") | Some("AnimatedSprite") | Some("Tilemap")
             )
         })
         .map(|id| (id, zindex(world, id)))
@@ -116,6 +118,18 @@ pub fn draw_scene(
     let _ = selection; // selection adornments are drawn by the editor.
     let mut drawn = Vec::new();
     for (id, _) in nodes {
+        // A Tilemap draws its whole grid; the rest are single textured quads.
+        if world.class_name(id) == Some("Tilemap") {
+            if let Some(aabb) = draw_tilemap(painter, ctx, textures, tiles, root, world, id, rect, &to_screen)
+            {
+                let visible = matches!(world.get_prop(id, "Visible"), Some(Value::Bool(true)));
+                let locked = matches!(world.get_prop(id, "Locked"), Some(Value::Bool(true)));
+                if visible && !locked {
+                    drawn.push((id, aabb));
+                }
+            }
+            continue;
+        }
         let (Some(xf), Some(Value::Color(tint))) =
             (SpriteXform::read(world, id), world.get_prop(id, "Tint"))
         else {
@@ -214,6 +228,137 @@ pub fn draw_scene(
     );
     drawn.extend(gui_rects);
     drawn
+}
+
+fn num(world: &World, id: InstanceId, name: &str) -> f32 {
+    match world.get_prop(id, name) {
+        Some(Value::Number(n)) => *n as f32,
+        _ => 0.0,
+    }
+}
+
+fn asset_path(world: &World, id: InstanceId, name: &str) -> String {
+    match world.get_prop(id, name) {
+        Some(Value::Asset(s)) => s.clone(),
+        _ => String::new(),
+    }
+}
+
+/// A deterministic default palette so a `Tilemap` with no (or an incomplete)
+/// `TileSet` still renders something recognizable.
+fn fallback_color(index: u16) -> Color {
+    const P: [(f32, f32, f32); 6] = [
+        (0.20, 0.40, 0.70), // water
+        (0.80, 0.75, 0.45), // sand
+        (0.30, 0.55, 0.28), // grass
+        (0.45, 0.42, 0.40), // rock
+        (0.65, 0.65, 0.70),
+        (0.55, 0.35, 0.55),
+    ];
+    let (r, g, b) = P[index as usize % P.len()];
+    Color::new(r, g, b, 1.0)
+}
+
+/// Draw a `Tilemap`'s grid and return its whole-map screen AABB (for picking),
+/// or `None` if no grid has been generated yet. Culls per-tile and short-circuits
+/// when the whole map is off-screen. Reports bounds even when hidden so callers
+/// can still reason about the node.
+#[allow(clippy::too_many_arguments)]
+fn draw_tilemap(
+    painter: &Painter,
+    ctx: &egui::Context,
+    textures: &mut TextureCache,
+    tiles: &mut TileSetCache,
+    root: Option<&Path>,
+    world: &World,
+    id: InstanceId,
+    rect: Rect,
+    to_screen: &impl Fn(f32, f32) -> Pos2,
+) -> Option<Rect> {
+    let grid = world.tile_grid(id)?;
+    let pos = match world.get_prop(id, "Position") {
+        Some(Value::Vec2(p)) => *p,
+        _ => glam::Vec2::ZERO,
+    };
+    let tw = num(world, id, "TileWidth").max(1.0);
+    let th = num(world, id, "TileHeight").max(1.0);
+
+    // Whole-map screen AABB, independent of culling, for editor picking.
+    let (wmin, wmax) = flux_core::tilemap::map_bounds(grid.width(), grid.height(), tw, th);
+    let map_aabb = screen_aabb(&[
+        to_screen(pos.x + wmin.x, pos.y + wmin.y),
+        to_screen(pos.x + wmax.x, pos.y + wmin.y),
+        to_screen(pos.x + wmax.x, pos.y + wmax.y),
+        to_screen(pos.x + wmin.x, pos.y + wmax.y),
+    ]);
+
+    let visible = matches!(world.get_prop(id, "Visible"), Some(Value::Bool(true)));
+    if !visible || !rect.intersects(map_aabb) {
+        return Some(map_aabb);
+    }
+
+    // Resolve the tileset and (optionally) its shared atlas texture once.
+    let tileset = tiles.get(&asset_path(world, id, "TileSet"), root.unwrap_or(Path::new(".")));
+    let handle = tileset.as_ref().and_then(|ts| match (&ts.texture, root) {
+        (Some(t), Some(r)) if !t.is_empty() => textures.get(ctx, r, t),
+        _ => None,
+    });
+    let tex_size = handle
+        .as_ref()
+        .map(|h| (h.size()[0] as f32, h.size()[1] as f32));
+
+    let (cols, rows) = (grid.width() as i32, grid.height() as i32);
+    // Row-major (back-to-front) order for correct overlap of any tall tiles.
+    for row in 0..rows {
+        for col in 0..cols {
+            let Some(index) = grid.get(col, row) else {
+                continue;
+            };
+            let corners = flux_core::tilemap::tile_corners(col, row, tw, th)
+                .map(|p| to_screen(pos.x + p.x, pos.y + p.y));
+            let aabb = screen_aabb(&corners);
+            if !rect.intersects(aabb) {
+                continue;
+            }
+            let (color, src) = match tileset.as_ref() {
+                Some(ts) if !ts.is_empty() => {
+                    let clamped = (index as usize).min(ts.len() - 1) as u16;
+                    let def = ts.tile(clamped).unwrap();
+                    (def.color, def.rect)
+                }
+                _ => (fallback_color(index), SrcRect::default()),
+            };
+            let tint = to_color(&color);
+
+            match (handle.as_ref(), tex_size) {
+                (Some(h), Some((tpw, tph)))
+                    if !src.is_whole() && tpw > 0.0 && tph > 0.0 =>
+                {
+                    // Textured tile: the atlas region fills the tile's
+                    // axis-aligned `tw x th` box (iso art bakes in the diamond).
+                    let c = flux_core::tilemap::tile_to_world(col, row, tw, th);
+                    let tl = to_screen(pos.x + c.x - tw * 0.5, pos.y + c.y - th * 0.5);
+                    let br = to_screen(pos.x + c.x + tw * 0.5, pos.y + c.y + th * 0.5);
+                    let uv = Rect::from_min_max(
+                        Pos2::new(src.x / tpw, src.y / tph),
+                        Pos2::new((src.x + src.w) / tpw, (src.y + src.h) / tph),
+                    );
+                    let mut mesh = Mesh::with_texture(h.id());
+                    mesh.add_rect_with_uv(Rect::from_two_pos(tl, br), uv, tint);
+                    painter.add(Shape::mesh(mesh));
+                }
+                _ => {
+                    // Flat colour diamond.
+                    painter.add(Shape::convex_polygon(
+                        corners.to_vec(),
+                        tint,
+                        Stroke::NONE,
+                    ));
+                }
+            }
+        }
+    }
+    Some(map_aabb)
 }
 
 /// Draws the GUI layer and returns the absolute rect of each visible GuiObject in

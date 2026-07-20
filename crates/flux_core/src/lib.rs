@@ -4,6 +4,7 @@ mod error;
 pub mod gui;
 mod serialize;
 mod subtree;
+pub mod tilemap;
 pub mod transform;
 mod value;
 mod world;

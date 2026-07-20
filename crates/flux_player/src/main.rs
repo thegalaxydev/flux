@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use flux_runtime::{DataBackend, InputFrame, Session, SessionOptions};
-use flux_view::{AnimationCache, TextureCache, draw_scene, game_camera};
+use flux_view::{AnimationCache, TextureCache, TileSetCache, draw_scene, game_camera};
 
 struct Player {
     session: Session,
     textures: TextureCache,
     anim: AnimationCache,
+    tiles: TileSetCache,
     root: PathBuf,
 }
 
@@ -55,6 +56,7 @@ impl eframe::App for Player {
                     &w,
                     &mut self.textures,
                     &mut self.anim,
+                    &mut self.tiles,
                     rect,
                     camera,
                     Some(&self.root),
@@ -148,6 +150,7 @@ fn main() -> eframe::Result {
                 session,
                 textures: TextureCache::default(),
                 anim: Default::default(),
+                tiles: TileSetCache::default(),
                 root,
             }))
         }),

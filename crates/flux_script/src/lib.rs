@@ -145,6 +145,8 @@ impl ScriptHost {
             .map_err(|e| e.to_string())?;
         // Reset AnimatedSprites and kick off any AutoPlay animation before scripts run.
         flux_core::animation::init(&mut world.borrow_mut());
+        // Generate tilemap grids so scripts see a populated world from frame one.
+        flux_core::tilemap::sync(&mut world.borrow_mut());
 
         let host = Self {
             lua,
@@ -189,6 +191,8 @@ impl ScriptHost {
             &self.root,
             dt,
         );
+        // Keep tilemap grids in step with any config changes scripts made.
+        flux_core::tilemap::sync(&mut self.world.borrow_mut());
         self.process_gui_clicks(input);
     }
 
