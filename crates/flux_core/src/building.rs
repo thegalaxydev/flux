@@ -60,6 +60,41 @@ pub struct BuildingDoc {
     /// Accepts any item pushed to it (a storage sink), not just recipe inputs.
     #[serde(default)]
     pub stores: bool,
+    /// Electric power this building draws while placed (MW).
+    #[serde(default)]
+    pub power_use: f32,
+    /// Present on reactors — the nuclear-sim parameters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactor: Option<ReactorDoc>,
+}
+
+/// Nuclear-reactor tuning (see [`crate::reactor`]).
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ReactorDoc {
+    /// Peak electrical output at full reaction and ideal temperature (MW).
+    #[serde(default = "hundred")]
+    pub power: f32,
+    /// Heat produced per second at full reaction (deg C/s).
+    #[serde(default = "default_heat")]
+    pub heat: f32,
+    /// Passive cooling coefficient (fraction of the over-ambient gap shed per sec).
+    #[serde(default = "default_cooling")]
+    pub cooling: f32,
+    /// Fuel burned per second (Fuel% ) at full reaction.
+    #[serde(default = "default_burn")]
+    pub burn: f32,
+    /// Temperature above which integrity degrades (deg C).
+    #[serde(default = "default_meltdown")]
+    pub meltdown: f32,
+    /// Temperature of peak generating efficiency (deg C).
+    #[serde(default = "default_optimal")]
+    pub optimal: f32,
+    /// Inventory item consumed to refuel (e.g. "uranium").
+    #[serde(default)]
+    pub fuel: String,
+    /// Fuel% restored per consumed fuel item.
+    #[serde(default = "default_refuel")]
+    pub refuel: f32,
 }
 
 fn one_by_one() -> [u32; 2] {
@@ -73,6 +108,27 @@ fn one_f() -> f32 {
 }
 fn default_capacity() -> u32 {
     50
+}
+fn hundred() -> f32 {
+    100.0
+}
+fn default_heat() -> f32 {
+    400.0
+}
+fn default_cooling() -> f32 {
+    0.3
+}
+fn default_burn() -> f32 {
+    0.5
+}
+fn default_meltdown() -> f32 {
+    800.0
+}
+fn default_optimal() -> f32 {
+    350.0
+}
+fn default_refuel() -> f32 {
+    20.0
 }
 
 impl BuildingCatalogDoc {
@@ -101,6 +157,21 @@ pub struct BuildingDef {
     pub rate: f32,
     pub capacity: u32,
     pub stores: bool,
+    pub power_use: f32,
+    pub reactor: Option<ReactorParams>,
+}
+
+/// Resolved reactor parameters (see [`ReactorDoc`]).
+#[derive(Clone)]
+pub struct ReactorParams {
+    pub power: f32,
+    pub heat: f32,
+    pub cooling: f32,
+    pub burn: f32,
+    pub meltdown: f32,
+    pub optimal: f32,
+    pub fuel_item: String,
+    pub refuel: f32,
 }
 
 pub struct BuildingCatalog {
@@ -133,6 +204,17 @@ impl BuildingCatalog {
                     rate: b.rate.max(0.0),
                     capacity: b.capacity,
                     stores: b.stores,
+                    power_use: b.power_use.max(0.0),
+                    reactor: b.reactor.as_ref().map(|r| ReactorParams {
+                        power: r.power.max(0.0),
+                        heat: r.heat.max(0.0),
+                        cooling: r.cooling.max(0.0),
+                        burn: r.burn.max(0.0),
+                        meltdown: r.meltdown.max(1.0),
+                        optimal: r.optimal.max(1.0),
+                        fuel_item: r.fuel.clone(),
+                        refuel: r.refuel.max(0.0),
+                    }),
                 }
             })
             .collect();

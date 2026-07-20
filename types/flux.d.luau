@@ -186,6 +186,8 @@ declare class Instance
 	function PlaceBuilding(self, buildingType: string, col: number, row: number): Instance?
 	function GetBuildingAt(self, col: number, row: number): Instance?
 	function RemoveBuilding(self, col: number, row: number): boolean
+	-- Tilemap only: (produced, consumed) MW on this map's power grid.
+	function GetPower(self): (number, number)
 	-- Camera2D only: viewport pixels <-> world position.
 	function ScreenToWorld(self, screenPos: Vec2): Vec2
 	function WorldToScreen(self, worldPos: Vec2): Vec2

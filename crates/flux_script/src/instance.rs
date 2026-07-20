@@ -512,6 +512,20 @@ impl UserData for LuaInstance {
             }
             Ok(flux_core::building::remove_at(&mut w, this.0, col, row))
         });
+        m.add_method("GetPower", |lua, this, ()| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_tilemap(&w, this.0) {
+                return Err(tilemap_only("GetPower"));
+            }
+            let num = |name| match w.get_prop(this.0, name) {
+                Some(Value::Number(n)) => *n,
+                _ => 0.0,
+            };
+            // (produced, consumed) MW for this map's grid.
+            Ok((num("_PowerProduced"), num("_PowerConsumed")))
+        });
         // ---- Building inventory ----
         m.add_method("GetItem", |lua, this, item: String| {
             let rc = world_handle(lua);

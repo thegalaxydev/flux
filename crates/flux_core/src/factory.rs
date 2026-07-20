@@ -548,6 +548,12 @@ fn accepts(
     if def.stores {
         return true;
     }
+    // A reactor accepts its fuel item, so belts can feed it.
+    if let Some(rp) = &def.reactor {
+        if !rp.fuel_item.is_empty() && rp.fuel_item == item {
+            return true;
+        }
+    }
     let rid = text(world, nb, "Recipe");
     recipes
         .get(&rid)

@@ -3,6 +3,7 @@ pub mod building;
 pub mod camera;
 mod class;
 pub mod factory;
+pub mod reactor;
 mod error;
 pub mod gui;
 mod serialize;

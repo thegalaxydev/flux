@@ -243,6 +243,9 @@ impl ClassRegistry {
                 prop("MapWidth", Value::Number(64.0)),
                 prop("MapHeight", Value::Number(64.0)),
                 prop("Seed", Value::Number(0.0)),
+                // Power balance for this map's grid, updated by the reactor sim.
+                prop_t("_PowerProduced", Value::Number(0.0)),
+                prop_t("_PowerConsumed", Value::Number(0.0)),
             ],
         );
         // A building placed on a Tilemap grid. Visuals are baked into props at
@@ -264,6 +267,14 @@ impl ClassRegistry {
                 prop_t("_Timer", Value::Number(0.0)),
                 prop_t("_MineT", Value::Number(0.0)),
                 prop_t("_Flow", Value::Number(0.0)),
+                // Reactor state (meaningful only on reactor buildings; serialized
+                // so a running reactor's state survives a save). ControlRods:
+                // 1 = fully inserted (off/safe), 0 = withdrawn (full power).
+                prop("Temperature", Value::Number(20.0)),
+                prop("Fuel", Value::Number(0.0)),
+                prop("ControlRods", Value::Number(1.0)),
+                prop("Integrity", Value::Number(100.0)),
+                prop("PowerOutput", Value::Number(0.0)),
             ],
         );
         // The 2D camera. `Position`/`Zoom` are the live view; the rest configure

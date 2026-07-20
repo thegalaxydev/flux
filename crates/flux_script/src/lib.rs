@@ -318,6 +318,13 @@ impl ScriptHost {
             &self.root,
             dt as f32,
         );
+        // Advance reactors and refresh each map's power balance.
+        flux_core::reactor::step(
+            &mut self.world.borrow_mut(),
+            &mut building_cache.borrow_mut(),
+            &self.root,
+            dt as f32,
+        );
         self.process_gui_clicks(input);
     }
 
