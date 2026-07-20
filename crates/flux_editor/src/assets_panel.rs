@@ -61,6 +61,17 @@ pub fn show(
                 textures.clear();
             }
             if icons
+                .icon(Icon::Folder)
+                .size(16.0)
+                .button(ui)
+                .on_hover_text("New folder")
+                .clicked()
+            {
+                if let Err(e) = new_folder(root, &state.asset_dir) {
+                    state.status = format!("New folder failed: {e}");
+                }
+            }
+            if icons
                 .icon(Icon::Animation)
                 .size(16.0)
                 .button(ui)
@@ -102,6 +113,139 @@ pub fn show(
                 row(ui, world, state, textures, icons, root, &name, &rel, kind, is_dir);
             }
         });
+
+    asset_dialogs(ui, state, root);
+}
+
+/// Rename and delete confirmation dialogs for the Assets panel.
+fn asset_dialogs(ui: &mut Ui, state: &mut UiState, root: &Path) {
+    // Rename.
+    let mut apply_rename: Option<(String, String)> = None;
+    let mut close_rename = false;
+    if let Some((rel, buf)) = state.asset_rename.as_mut() {
+        egui::Window::new("Rename asset")
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                let resp = ui.text_edit_singleline(buf);
+                let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                ui.horizontal(|ui| {
+                    if (ui.button("Rename").clicked() || enter) && !buf.trim().is_empty() {
+                        apply_rename = Some((rel.clone(), buf.trim().to_string()));
+                        close_rename = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close_rename = true;
+                    }
+                });
+            });
+    }
+    if let Some((rel, new_name)) = apply_rename {
+        if let Err(e) = rename_asset(root, &rel, &new_name) {
+            state.status = format!("Rename failed: {e}");
+        }
+    }
+    if close_rename {
+        state.asset_rename = None;
+    }
+
+    // Delete confirmation.
+    let mut apply_delete: Option<String> = None;
+    let mut close_delete = false;
+    if let Some(rel) = state.asset_delete.clone() {
+        let name = rel.rsplit(['/', '\\']).next().unwrap_or(&rel).to_string();
+        egui::Window::new("Delete asset")
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                ui.label(format!("Delete “{name}”? This can't be undone."));
+                ui.horizontal(|ui| {
+                    if ui.button("Delete").clicked() {
+                        apply_delete = Some(rel.clone());
+                        close_delete = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close_delete = true;
+                    }
+                });
+            });
+    }
+    if let Some(rel) = apply_delete {
+        if let Err(e) = delete_asset(root, &rel) {
+            state.status = format!("Delete failed: {e}");
+        }
+    }
+    if close_delete {
+        state.asset_delete = None;
+    }
+}
+
+/// Create a uniquely-named "New Folder" in `dir` (relative to `root`).
+fn new_folder(root: &Path, dir: &Path) -> std::io::Result<()> {
+    let base = root.join(dir);
+    let mut n = 0;
+    loop {
+        let name = if n == 0 {
+            "New Folder".to_string()
+        } else {
+            format!("New Folder {n}")
+        };
+        let full = base.join(&name);
+        if !full.exists() {
+            return std::fs::create_dir(&full);
+        }
+        n += 1;
+    }
+}
+
+/// Copy `rel` to a uniquely-named `<stem> copy.<ext>` next to it.
+fn duplicate_file(root: &Path, rel: &str) -> std::io::Result<()> {
+    let src = root.join(rel);
+    let (dir, file) = rel.rsplit_once('/').unwrap_or(("", rel));
+    let (stem, ext) = match file.rsplit_once('.') {
+        Some((s, e)) => (s, format!(".{e}")),
+        None => (file, String::new()),
+    };
+    let base = root.join(dir);
+    let mut n = 0;
+    loop {
+        let cand = if n == 0 {
+            format!("{stem} copy{ext}")
+        } else {
+            format!("{stem} copy {n}{ext}")
+        };
+        let dest = base.join(&cand);
+        if !dest.exists() {
+            std::fs::copy(&src, &dest)?;
+            return Ok(());
+        }
+        n += 1;
+    }
+}
+
+/// Rename `rel` within its own folder to `new_name` (path separators stripped).
+fn rename_asset(root: &Path, rel: &str, new_name: &str) -> std::io::Result<()> {
+    let new_name = new_name.rsplit(['/', '\\']).next().unwrap_or(new_name);
+    let src = root.join(rel);
+    let dir = src.parent().map(Path::to_path_buf).unwrap_or_else(|| root.to_path_buf());
+    let dest = dir.join(new_name);
+    if dest.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "a file with that name already exists",
+        ));
+    }
+    std::fs::rename(&src, &dest)
+}
+
+/// Delete `rel` (a file, or a folder and its contents).
+fn delete_asset(root: &Path, rel: &str) -> std::io::Result<()> {
+    let full = root.join(rel);
+    if full.is_dir() {
+        std::fs::remove_dir_all(&full)
+    } else {
+        std::fs::remove_file(&full)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -119,13 +263,16 @@ fn row(
 ) {
     let icon = kind_icon(kind);
     if is_dir {
-        let resp = ui.horizontal(|ui| {
-            icons.icon(icon).size(16.0).role(IconRole::Accent).show(ui);
-            ui.selectable_label(false, name)
-        });
-        if resp.inner.double_clicked() || resp.inner.clicked() {
+        let resp = ui
+            .horizontal(|ui| {
+                icons.icon(icon).size(16.0).role(IconRole::Accent).show(ui);
+                ui.selectable_label(false, name)
+            })
+            .inner;
+        if resp.double_clicked() || resp.clicked() {
             state.asset_dir.push(name);
         }
+        resp.context_menu(|ui| entry_menu(ui, state, root, rel, name, true));
         return;
     }
 
@@ -176,8 +323,17 @@ fn row(
         state.open_animation = Some(rel.to_string());
     }
 
-    if kind == AssetKind::Image {
-        resp.on_hover_text("Drag onto a sprite or into the Explorer").context_menu(|ui| {
+    let hover = match kind {
+        AssetKind::Image => "Drag onto a sprite/Explorer · right-click for options",
+        AssetKind::Animation => "Double-click to open · right-click for options",
+        _ if is_script => "Double-click to open · right-click for options",
+        _ => "Right-click for options",
+    };
+    resp.on_hover_text(hover).context_menu(|ui| {
+        entry_menu(ui, state, root, rel, name, false);
+        // Image-specific actions.
+        if kind == AssetKind::Image {
+            ui.separator();
             let sprite = state
                 .selection
                 .filter(|&id| world.class_name(id) == Some("Sprite"));
@@ -204,11 +360,34 @@ fn row(
                 }
                 ui.close();
             }
-        });
-    } else if kind == AssetKind::Animation {
-        resp.on_hover_text("Double-click to open in the Animation Editor");
-    } else if is_script {
-        resp.on_hover_text("Double-click to open · drag into the Explorer");
+        }
+    });
+}
+
+/// Shared file-management actions for an asset row (rename / duplicate /
+/// delete / new folder). Filesystem ops happen immediately; rename and delete
+/// open a confirmation dialog rendered by [`show`].
+fn entry_menu(ui: &mut Ui, state: &mut UiState, root: &Path, rel: &str, name: &str, is_dir: bool) {
+    if ui.button("Rename…").clicked() {
+        state.asset_rename = Some((rel.to_string(), name.to_string()));
+        ui.close();
+    }
+    if !is_dir && ui.button("Duplicate").clicked() {
+        if let Err(e) = duplicate_file(root, rel) {
+            state.status = format!("Duplicate failed: {e}");
+        }
+        ui.close();
+    }
+    if ui.button("Delete…").clicked() {
+        state.asset_delete = Some(rel.to_string());
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("New Folder").clicked() {
+        if let Err(e) = new_folder(root, &state.asset_dir) {
+            state.status = format!("New folder failed: {e}");
+        }
+        ui.close();
     }
 }
 
@@ -341,6 +520,36 @@ mod tests {
         // Folders and unknown files keep their full name.
         assert_eq!(display_name("notes.txt", AssetKind::Unknown), "notes.txt");
         assert_eq!(display_name("sprites", AssetKind::Folder), "sprites");
+    }
+
+    #[test]
+    fn file_ops_duplicate_rename_new_folder_delete() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("flux_ops_{nanos}"));
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/a.txt"), "x").unwrap();
+
+        super::duplicate_file(&root, "sub/a.txt").unwrap();
+        assert!(root.join("sub/a copy.txt").exists());
+
+        super::new_folder(&root, std::path::Path::new("sub")).unwrap();
+        assert!(root.join("sub/New Folder").is_dir());
+
+        super::rename_asset(&root, "sub/a.txt", "b.txt").unwrap();
+        assert!(!root.join("sub/a.txt").exists());
+        assert!(root.join("sub/b.txt").exists());
+        // A name collision is refused.
+        assert!(super::rename_asset(&root, "sub/b.txt", "a copy.txt").is_err());
+
+        super::delete_asset(&root, "sub/b.txt").unwrap();
+        assert!(!root.join("sub/b.txt").exists());
+        super::delete_asset(&root, "sub").unwrap(); // recursive folder delete
+        assert!(!root.join("sub").exists());
+
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

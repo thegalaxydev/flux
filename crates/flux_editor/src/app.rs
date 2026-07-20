@@ -48,6 +48,10 @@ pub struct UiState {
     /// A Script/Module without a backing file whose source should be generated;
     /// drained into a save-file dialog on the next frame.
     pub create_source: Option<InstanceId>,
+    /// An asset being renamed in the Assets panel: `(relative path, edit buffer)`.
+    pub asset_rename: Option<(String, String)>,
+    /// An asset pending delete confirmation (relative path).
+    pub asset_delete: Option<String>,
 }
 
 impl Default for UiState {
@@ -71,6 +75,8 @@ impl Default for UiState {
             open_script: None,
             open_animation: None,
             create_source: None,
+            asset_rename: None,
+            asset_delete: None,
         }
     }
 }
