@@ -95,6 +95,23 @@ pub(crate) fn world_handle(lua: &Lua) -> WorldHandle {
 /// every `AnimatedSprite` that references the same file.
 pub(crate) type AnimCacheHandle = Rc<RefCell<flux_core::animation::AnimationCache>>;
 
+/// Shared tileset cache: also stored as Lua app data so `Tilemap` methods can
+/// resolve tile string ids <-> palette indices.
+pub(crate) type TileCacheHandle = Rc<RefCell<flux_core::tilemap::TileSetCache>>;
+
+/// The project root, for resolving relative asset paths from Lua.
+pub(crate) fn tile_cache_handle(lua: &Lua) -> TileCacheHandle {
+    lua.app_data_ref::<TileCacheHandle>()
+        .expect("tile cache app data missing")
+        .clone()
+}
+
+pub(crate) fn asset_root(lua: &Lua) -> PathBuf {
+    lua.app_data_ref::<ModuleRoot>()
+        .map(|r| r.0.clone())
+        .unwrap_or_default()
+}
+
 pub struct ScriptHost {
     lua: Lua,
     world: WorldHandle,
@@ -103,8 +120,9 @@ pub struct ScriptHost {
     input: Rc<RefCell<InputState>>,
     button_signals: ButtonSignals,
     cache: AnimCacheHandle,
-    /// Caches for resolving `Tilemap` assets during grid generation.
-    tile_cache: flux_core::tilemap::TileSetCache,
+    /// Caches for resolving `Tilemap` assets during grid generation. The tileset
+    /// cache is shared with Lua (app data) for tile-id resolution.
+    tile_cache: TileCacheHandle,
     worldgen_cache: flux_core::tilemap::WorldGenCache,
     scene: SceneHandle,
     root: PathBuf,
@@ -141,6 +159,8 @@ impl ScriptHost {
         // Where `require` resolves Module source paths, and its result cache.
         lua.set_app_data(ModuleRoot(script_root.to_path_buf()));
         lua.set_app_data(ModuleCache::default());
+        let tile_cache: TileCacheHandle = Rc::new(RefCell::new(Default::default()));
+        lua.set_app_data(tile_cache.clone());
 
         setup_globals(&lua, &world, &scheduler, &log).map_err(|e| e.to_string())?;
         lua.globals()
@@ -149,11 +169,10 @@ impl ScriptHost {
         // Reset AnimatedSprites and kick off any AutoPlay animation before scripts run.
         flux_core::animation::init(&mut world.borrow_mut());
         // Generate tilemap grids so scripts see a populated world from frame one.
-        let mut tile_cache = flux_core::tilemap::TileSetCache::default();
         let mut worldgen_cache = flux_core::tilemap::WorldGenCache::default();
         flux_core::tilemap::sync(
             &mut world.borrow_mut(),
-            &mut tile_cache,
+            &mut tile_cache.borrow_mut(),
             &mut worldgen_cache,
             script_root,
         );
@@ -206,7 +225,7 @@ impl ScriptHost {
         // Keep tilemap grids in step with any config changes scripts made.
         flux_core::tilemap::sync(
             &mut self.world.borrow_mut(),
-            &mut self.tile_cache,
+            &mut self.tile_cache.borrow_mut(),
             &mut self.worldgen_cache,
             &self.root,
         );

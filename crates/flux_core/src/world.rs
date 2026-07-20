@@ -198,6 +198,13 @@ impl World {
         self.tilemaps.get(id)
     }
 
+    /// Mutable access to a `Tilemap`'s derived grid, for runtime edits (mining,
+    /// building). Mutations persist for the session; [`crate::tilemap::sync`]
+    /// only regenerates on a config/seed change, not over these edits.
+    pub fn tile_grid_mut(&mut self, id: InstanceId) -> Option<&mut TileGrid> {
+        self.tilemaps.get_mut(id)
+    }
+
     /// Store (or replace) a tilemap's derived grid. Only meaningful for live
     /// `Tilemap` instances; used by [`crate::tilemap::sync`].
     pub(crate) fn set_tile_grid(&mut self, id: InstanceId, grid: TileGrid) {

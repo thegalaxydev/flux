@@ -162,6 +162,15 @@ declare class Instance
 	function Destroy(self): ()
 	-- Sprite only: overlapping sprites in the workspace.
 	function GetTouchingSprites(self): {Instance}
+	-- Tilemap only: read/write the derived tile grid at runtime.
+	function GetMapSize(self): (number, number)
+	function GetTile(self, x: number, y: number): string?
+	function SetTile(self, x: number, y: number, id: string): boolean
+	function GetOre(self, x: number, y: number): (string?, number)
+	function SetOre(self, x: number, y: number, id: string?, amount: number?): boolean
+	function MineOre(self, x: number, y: number, amount: number): number
+	function TileToWorld(self, col: number, row: number): Vec2
+	function WorldToTile(self, worldPos: Vec2): (number, number)
 	-- Child instances and engine properties are accessed dynamically by name.
 	[string]: any
 end

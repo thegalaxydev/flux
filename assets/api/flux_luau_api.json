@@ -238,7 +238,15 @@
         "Pause": { "kind": "method", "params": [], "returns": "()", "doc": "AnimatedSprite only: freeze playback on the current frame." },
         "Resume": { "kind": "method", "params": [], "returns": "()", "doc": "AnimatedSprite only: resume playback from the current position." },
         "Stop": { "kind": "method", "params": [], "returns": "()", "doc": "AnimatedSprite only: stop playback and reset to the first frame." },
-        "IsPlaying": { "kind": "property", "type": "boolean", "doc": "AnimatedSprite only: whether an animation is currently playing." }
+        "IsPlaying": { "kind": "property", "type": "boolean", "doc": "AnimatedSprite only: whether an animation is currently playing." },
+        "GetMapSize": { "kind": "method", "params": [], "returns": "(number, number)", "doc": "Tilemap only: returns the map's (width, height) in tiles." },
+        "GetTile": { "kind": "method", "params": [{ "name": "x", "type": "number" }, { "name": "y", "type": "number" }], "returns": "string?", "doc": "Tilemap only: the tile id at (x, y), or nil if out of bounds." },
+        "SetTile": { "kind": "method", "params": [{ "name": "x", "type": "number" }, { "name": "y", "type": "number" }, { "name": "id", "type": "string" }], "returns": "boolean", "doc": "Tilemap only: set the base terrain tile at (x, y) by tile id. Returns false if out of bounds." },
+        "GetOre": { "kind": "method", "params": [{ "name": "x", "type": "number" }, { "name": "y", "type": "number" }], "returns": "(string?, number)", "doc": "Tilemap only: the ore id and remaining amount at (x, y); (nil, 0) if there is no ore." },
+        "SetOre": { "kind": "method", "params": [{ "name": "x", "type": "number" }, { "name": "y", "type": "number" }, { "name": "id", "type": "string?" }, { "name": "amount", "type": "number?" }], "returns": "boolean", "doc": "Tilemap only: place ore `id` with `amount` at (x, y); pass nil id to clear. Returns false if out of bounds." },
+        "MineOre": { "kind": "method", "params": [{ "name": "x", "type": "number" }, { "name": "y", "type": "number" }, { "name": "amount", "type": "number" }], "returns": "number", "doc": "Tilemap only: remove up to `amount` from the ore at (x, y), clearing it when depleted. Returns how much was removed." },
+        "TileToWorld": { "kind": "method", "params": [{ "name": "col", "type": "number" }, { "name": "row", "type": "number" }], "returns": "Vec2", "doc": "Tilemap only: world position of the centre of tile (col, row)." },
+        "WorldToTile": { "kind": "method", "params": [{ "name": "worldPos", "type": "Vec2" }], "returns": "(number, number)", "doc": "Tilemap only: the (col, row) of the tile containing a world position." }
       }
     },
     "Vec2": {

@@ -2,7 +2,14 @@
 //! session and its grid is generated on launch, the way the editor/player rely
 //! on. Self-contained: the scene is inline and colour tiles need no assets.
 
-use flux_runtime::Session;
+use std::path::Path;
+
+use flux_core::{Value, World};
+use flux_runtime::{LogLevel, Session};
+
+fn fixtures() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
+}
 
 const SCENE: &str = r#"{
   "version": 1,
@@ -53,4 +60,50 @@ fn tilemap_scene_generates_a_grid_on_launch() {
             assert!(grid.get(col, row).is_some());
         }
     }
+}
+
+/// Build a scene with an 8x8 `Tilemap` named "Map" (colour tileset, no worldgen
+/// so the placeholder generator fills it) driven by `script_path`.
+fn tilemap_scene(script_path: &str) -> String {
+    let mut w = World::new();
+    let ws = w.workspace();
+    let map = w.create("Tilemap", ws).unwrap();
+    w.set_name(map, "Map").unwrap();
+    w.set_prop(map, "TileSet", Value::Asset("test.tileset.json".into()))
+        .unwrap();
+    w.set_prop(map, "MapWidth", Value::Number(8.0)).unwrap();
+    w.set_prop(map, "MapHeight", Value::Number(8.0)).unwrap();
+
+    let script = w.create("Script", map).unwrap();
+    w.set_prop(script, "SourcePath", Value::Asset(script_path.into()))
+        .unwrap();
+    w.to_json()
+}
+
+#[test]
+fn lua_tile_api_reads_writes_and_mines() {
+    let json = tilemap_scene("scripts/test_tilemap.luau");
+    let session = Session::from_scene_json(&json, fixtures()).expect("scene loads");
+    let logs: Vec<String> = session
+        .drain_logs()
+        .into_iter()
+        .filter(|l| l.level == LogLevel::Info)
+        .map(|l| l.message)
+        .collect();
+
+    let has = |s: &str| logs.iter().any(|m| m == s);
+    assert!(has("size 8x8"), "GetMapSize: {logs:?}");
+    assert!(has("tile grass"), "SetTile/GetTile: {logs:?}");
+    assert!(has("ore coal 100"), "SetOre/GetOre: {logs:?}");
+    assert!(has("mined 30"), "MineOre: {logs:?}");
+    assert!(has("left 70"), "partial mine: {logs:?}");
+    assert!(has("after nil"), "deposit clears when depleted: {logs:?}");
+    assert!(has("roundtrip 2,3"), "TileToWorld/WorldToTile: {logs:?}");
+
+    // The mutation is also visible on the world grid directly.
+    let world = session.world();
+    let w = world.borrow();
+    let map = w.find_first_child(w.workspace(), "Map").unwrap();
+    let cell = w.tile_grid(map).unwrap().cell(1, 1).unwrap();
+    assert!(!cell.has_ore(), "ore should be fully mined out");
 }

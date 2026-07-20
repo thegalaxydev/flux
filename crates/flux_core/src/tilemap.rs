@@ -443,6 +443,60 @@ impl TileGrid {
     pub fn get(&self, col: i32, row: i32) -> Option<u16> {
         self.cell(col, row).map(|c| c.tile)
     }
+
+    /// Overwrite the whole cell at `(col, row)`; returns `false` if out of bounds.
+    pub fn set_cell(&mut self, col: i32, row: i32, cell: Cell) -> bool {
+        match self.index(col, row) {
+            Some(i) => {
+                self.cells[i] = cell;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Set the base terrain tile, keeping any ore. Returns `false` if out of bounds.
+    pub fn set_tile(&mut self, col: i32, row: i32, tile: u16) -> bool {
+        match self.index(col, row) {
+            Some(i) => {
+                self.cells[i].tile = tile;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Set (or, with `NO_ORE`, clear) the ore in a cell. Returns `false` if out
+    /// of bounds.
+    pub fn set_ore(&mut self, col: i32, row: i32, ore: u16, amount: u16) -> bool {
+        match self.index(col, row) {
+            Some(i) => {
+                self.cells[i].ore = ore;
+                self.cells[i].ore_amount = if ore == NO_ORE { 0 } else { amount };
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Remove up to `amount` from a cell's ore deposit, clearing it when
+    /// depleted. Returns how much was actually removed (0 if no ore / out of
+    /// bounds) — the primitive gameplay mining uses.
+    pub fn mine(&mut self, col: i32, row: i32, amount: u16) -> u16 {
+        let Some(i) = self.index(col, row) else {
+            return 0;
+        };
+        let cell = &mut self.cells[i];
+        if cell.ore == NO_ORE {
+            return 0;
+        }
+        let removed = amount.min(cell.ore_amount);
+        cell.ore_amount -= removed;
+        if cell.ore_amount == 0 {
+            cell.ore = NO_ORE;
+        }
+        removed
+    }
 }
 
 /// Config that fully determines a generated grid; hashed into a signature.
@@ -853,6 +907,33 @@ mod tests {
         sync(&mut world, &mut ts, &mut wg, root);
         let after = collect(world.tile_grid(tm).unwrap());
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn cell_mutators_and_mining() {
+        let ts = TileSet::parse(TILESET).unwrap();
+        let wg = WorldGen::parse(WORLDGEN).unwrap();
+        let mut grid = generate(16, 16, 5, Some(&wg), Some(&ts));
+
+        assert!(grid.set_tile(2, 3, 1));
+        assert_eq!(grid.get(2, 3), Some(1));
+        assert!(!grid.set_tile(-1, 0, 1)); // out of bounds
+
+        // Place an ore, mine it in chunks, watch it deplete and clear.
+        assert!(grid.set_ore(2, 3, 3, 100));
+        let c = grid.cell(2, 3).unwrap();
+        assert_eq!((c.ore, c.ore_amount), (3, 100));
+        assert_eq!(grid.mine(2, 3, 30), 30);
+        assert_eq!(grid.cell(2, 3).unwrap().ore_amount, 70);
+        assert_eq!(grid.mine(2, 3, 999), 70); // only what's left
+        let c = grid.cell(2, 3).unwrap();
+        assert!(!c.has_ore());
+        assert_eq!(grid.mine(2, 3, 10), 0); // nothing left
+        // set_ore with NO_ORE clears.
+        grid.set_ore(4, 4, 3, 50);
+        assert!(grid.cell(4, 4).unwrap().has_ore());
+        grid.set_ore(4, 4, NO_ORE, 0);
+        assert!(!grid.cell(4, 4).unwrap().has_ore());
     }
 
     fn collect(g: &TileGrid) -> Vec<u16> {

@@ -77,6 +77,44 @@ fn anim_only(method: &str) -> mlua::Error {
     mlua::Error::RuntimeError(format!("{method} can only be called on an AnimatedSprite"))
 }
 
+fn is_tilemap(w: &World, id: InstanceId) -> bool {
+    w.class_name(id) == Some("Tilemap")
+}
+
+fn tilemap_only(method: &str) -> mlua::Error {
+    mlua::Error::RuntimeError(format!("{method} can only be called on a Tilemap"))
+}
+
+/// Resolve a `Tilemap`'s `TileSet` asset via the shared (Lua app-data) cache, so
+/// tile string ids can map to/from palette indices.
+fn tileset_of(
+    lua: &Lua,
+    w: &World,
+    id: InstanceId,
+) -> Option<std::rc::Rc<flux_core::tilemap::TileSet>> {
+    let path = match w.get_prop(id, "TileSet") {
+        Some(Value::Asset(s)) if !s.is_empty() => s.clone(),
+        _ => return None,
+    };
+    let cache = crate::tile_cache_handle(lua);
+    let root = crate::asset_root(lua);
+    let ts = cache.borrow_mut().get(&path, &root);
+    ts
+}
+
+/// A `Tilemap`'s footprint (`tile_width`, `tile_height`) and world `Position`.
+fn tilemap_geom(w: &World, id: InstanceId) -> (f32, f32, glam::Vec2) {
+    let num = |name, d: f32| match w.get_prop(id, name) {
+        Some(Value::Number(n)) => *n as f32,
+        _ => d,
+    };
+    let pos = match w.get_prop(id, "Position") {
+        Some(Value::Vec2(v)) => *v,
+        _ => glam::Vec2::ZERO,
+    };
+    (num("TileWidth", 64.0).max(1.0), num("TileHeight", 32.0).max(1.0), pos)
+}
+
 fn aabb(w: &World, id: InstanceId) -> Option<(glam::Vec2, glam::Vec2)> {
     let Some(Value::Vec2(pos)) = w.get_prop(id, "Position") else {
         return None;
@@ -234,6 +272,138 @@ impl UserData for LuaInstance {
             }
             flux_core::animation::resume(&mut w, this.0);
             Ok(())
+        });
+        // ---- Tilemap tile access ----
+        m.add_method("GetMapSize", |lua, this, ()| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_tilemap(&w, this.0) {
+                return Err(tilemap_only("GetMapSize"));
+            }
+            let (width, height) = match w.tile_grid(this.0) {
+                Some(g) => (g.width(), g.height()),
+                None => (0, 0),
+            };
+            Ok((width, height))
+        });
+        m.add_method("GetTile", |lua, this, (x, y): (i32, i32)| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_tilemap(&w, this.0) {
+                return Err(tilemap_only("GetTile"));
+            }
+            let Some(cell) = w.tile_grid(this.0).and_then(|g| g.cell(x, y)) else {
+                return Ok(None);
+            };
+            Ok(tileset_of(lua, &w, this.0).and_then(|ts| ts.tile(cell.tile).map(|t| t.id.clone())))
+        });
+        m.add_method("SetTile", |lua, this, (x, y, id): (i32, i32, String)| {
+            // Resolve the id -> index first (drops the tileset/world borrows),
+            // then take a mutable world borrow to write.
+            let index = {
+                let rc = world_handle(lua);
+                let w = rc.borrow();
+                check(&w, this.0)?;
+                if !is_tilemap(&w, this.0) {
+                    return Err(tilemap_only("SetTile"));
+                }
+                let ts = tileset_of(lua, &w, this.0).ok_or_else(|| {
+                    mlua::Error::RuntimeError("SetTile: Tilemap has no TileSet".to_string())
+                })?;
+                ts.index_of(&id).ok_or_else(|| {
+                    mlua::Error::RuntimeError(format!("SetTile: unknown tile id '{id}'"))
+                })?
+            };
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            Ok(w.tile_grid_mut(this.0).map(|g| g.set_tile(x, y, index)).unwrap_or(false))
+        });
+        m.add_method("GetOre", |lua, this, (x, y): (i32, i32)| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_tilemap(&w, this.0) {
+                return Err(tilemap_only("GetOre"));
+            }
+            match w.tile_grid(this.0).and_then(|g| g.cell(x, y)) {
+                Some(cell) if cell.has_ore() => {
+                    let id = tileset_of(lua, &w, this.0)
+                        .and_then(|ts| ts.tile(cell.ore).map(|t| t.id.clone()));
+                    Ok((id, cell.ore_amount as u32))
+                }
+                _ => Ok((None, 0)),
+            }
+        });
+        m.add_method(
+            "SetOre",
+            |lua, this, (x, y, id, amount): (i32, i32, Option<String>, Option<f64>)| {
+                let ore = match &id {
+                    None => flux_core::tilemap::NO_ORE,
+                    Some(id) => {
+                        let rc = world_handle(lua);
+                        let w = rc.borrow();
+                        check(&w, this.0)?;
+                        if !is_tilemap(&w, this.0) {
+                            return Err(tilemap_only("SetOre"));
+                        }
+                        let ts = tileset_of(lua, &w, this.0).ok_or_else(|| {
+                            mlua::Error::RuntimeError("SetOre: Tilemap has no TileSet".to_string())
+                        })?;
+                        ts.index_of(id).ok_or_else(|| {
+                            mlua::Error::RuntimeError(format!("SetOre: unknown ore id '{id}'"))
+                        })?
+                    }
+                };
+                let amount = amount.unwrap_or(0.0).clamp(0.0, u16::MAX as f64) as u16;
+                let rc = world_handle(lua);
+                let mut w = rc.borrow_mut();
+                check(&w, this.0)?;
+                if !is_tilemap(&w, this.0) {
+                    return Err(tilemap_only("SetOre"));
+                }
+                Ok(w.tile_grid_mut(this.0).map(|g| g.set_ore(x, y, ore, amount)).unwrap_or(false))
+            },
+        );
+        m.add_method("MineOre", |lua, this, (x, y, amount): (i32, i32, u32)| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            if !is_tilemap(&w, this.0) {
+                return Err(tilemap_only("MineOre"));
+            }
+            let amount = amount.min(u16::MAX as u32) as u16;
+            let removed = w
+                .tile_grid_mut(this.0)
+                .map(|g| g.mine(x, y, amount))
+                .unwrap_or(0);
+            Ok(removed as u32)
+        });
+        m.add_method("TileToWorld", |lua, this, (col, row): (i32, i32)| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_tilemap(&w, this.0) {
+                return Err(tilemap_only("TileToWorld"));
+            }
+            let (tw, th, pos) = tilemap_geom(&w, this.0);
+            let p = pos + flux_core::tilemap::tile_to_world(col, row, tw, th);
+            LuaVec2(p).into_lua(lua)
+        });
+        m.add_method("WorldToTile", |lua, this, v: LuaValue| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_tilemap(&w, this.0) {
+                return Err(tilemap_only("WorldToTile"));
+            }
+            let world_p = as_vec2(&v).ok_or_else(|| {
+                mlua::Error::RuntimeError("WorldToTile expects a Vec2".to_string())
+            })?;
+            let (tw, th, pos) = tilemap_geom(&w, this.0);
+            let (col, row) = flux_core::tilemap::world_to_tile(world_p - pos, tw, th);
+            Ok((col, row))
         });
         m.add_meta_method(MetaMethod::Index, |lua, this, key: String| {
             index(lua, this.0, &key)
