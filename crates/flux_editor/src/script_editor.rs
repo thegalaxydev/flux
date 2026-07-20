@@ -13,6 +13,7 @@ use flux_icons::{Icon, Icons};
 use crate::language::{
     Completion, CompletionKind, Diagnostic, DiagnosticSeverity, SceneResolver, ScriptLanguageService,
 };
+use crate::settings::SyntaxTheme;
 
 /// Hierarchy-aware completion source over the live world: resolves `script`,
 /// `game`, and `workspace` navigations to instances and lists their children.
@@ -316,8 +317,10 @@ pub fn code_area(
     assist: &mut Assist,
     icons: &Icons,
     scene: Option<&dyn SceneResolver>,
+    syntax: &SyntaxTheme,
 ) {
     let size = *font_size;
+    let colors = SyntaxColors::from_theme(syntax);
     let font = FontId::monospace(size);
     let row_h = ui.fonts(|f| f.row_height(&font));
     let ctx = ui.ctx().clone();
@@ -409,7 +412,7 @@ pub fn code_area(
             let behind = ui.painter().add(egui::Shape::Noop);
 
             let mut layouter = |ui: &Ui, buf: &dyn TextBuffer, _wrap: f32| {
-                let job = highlight(buf.as_str(), size);
+                let job = highlight(buf.as_str(), size, &colors);
                 ui.fonts(|f| f.layout_job(job))
             };
             let o = TextEdit::multiline(&mut tab.buffer)
@@ -549,7 +552,7 @@ pub fn code_area(
                 .cursor_rect
                 .map(|r| r.left_bottom() + vec2(-4.0, 2.0))
                 .unwrap_or(area.response.rect.left_top());
-            completion_popup(&ctx, edit_id.with("completions"), pos, &assist.completions, assist.selected)
+            completion_popup(&ctx, edit_id.with("completions"), pos, &assist.completions, assist.selected, &colors)
         } else {
             None
         };
@@ -840,12 +843,14 @@ fn line_highlight(ui: &Ui) -> Color32 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn completion_popup(
     ctx: &egui::Context,
     id: egui::Id,
     pos: Pos2,
     list: &[Completion],
     selected: usize,
+    colors: &SyntaxColors,
 ) -> Option<usize> {
     let mut clicked = None;
     egui::Area::new(id)
@@ -859,7 +864,7 @@ fn completion_popup(
                     .max_height(220.0)
                     .show(ui, |ui| {
                         for (i, c) in list.iter().enumerate() {
-                            let job = completion_job(ui, c);
+                            let job = completion_job(ui, c, colors);
                             let resp = ui.selectable_label(i == selected, job);
                             if resp.clicked() {
                                 clicked = Some(i);
@@ -879,9 +884,9 @@ fn completion_popup(
     clicked
 }
 
-fn completion_job(ui: &Ui, c: &Completion) -> LayoutJob {
+fn completion_job(ui: &Ui, c: &Completion, colors: &SyntaxColors) -> LayoutJob {
     let mut job = LayoutJob::default();
-    let accent = kind_color(ui, c.kind);
+    let accent = kind_color(colors, c.kind);
     let strong = ui.visuals().strong_text_color();
     let weak = ui.visuals().weak_text_color();
     job.append(
@@ -904,16 +909,15 @@ fn completion_job(ui: &Ui, c: &Completion) -> LayoutJob {
     job
 }
 
-fn kind_color(ui: &Ui, kind: CompletionKind) -> Color32 {
-    let _ = ui;
+fn kind_color(colors: &SyntaxColors, kind: CompletionKind) -> Color32 {
     match kind {
-        CompletionKind::Keyword => C_KEYWORD,
-        CompletionKind::Module => C_SERVICE,
-        CompletionKind::Function | CompletionKind::Method => C_FUNCTION,
-        CompletionKind::Event => C_SERVICE,
-        CompletionKind::Property => C_GLOBAL,
-        CompletionKind::Variable => C_DEFAULT,
-        CompletionKind::Instance => C_SERVICE,
+        CompletionKind::Keyword => colors.keyword,
+        CompletionKind::Module => colors.service,
+        CompletionKind::Function | CompletionKind::Method => colors.function,
+        CompletionKind::Event => colors.service,
+        CompletionKind::Property => colors.global,
+        CompletionKind::Variable => colors.text,
+        CompletionKind::Instance => colors.service,
     }
 }
 
@@ -944,10 +948,10 @@ fn signature_popup(
                         job.append(", ", 0.0, fmt(&base, weak));
                     }
                     let active = i == sig.active;
-                    let color = if active { C_FUNCTION } else { weak };
+                    let color = if active { C_SIG_ACTIVE } else { weak };
                     let mut f = fmt(&base, color);
                     if active {
-                        f.underline = Stroke::new(1.0, C_FUNCTION);
+                        f.underline = Stroke::new(1.0, C_SIG_ACTIVE);
                     }
                     job.append(p, 0.0, f);
                 }
@@ -1065,14 +1069,44 @@ pub fn parse_error_location(message: &str) -> Option<(String, usize, usize)> {
 
 // --- Luau syntax highlighting -------------------------------------------------
 
-const C_DEFAULT: Color32 = Color32::from_rgb(212, 212, 212);
-const C_KEYWORD: Color32 = Color32::from_rgb(197, 134, 192);
-const C_STRING: Color32 = Color32::from_rgb(206, 145, 120);
-const C_NUMBER: Color32 = Color32::from_rgb(181, 206, 168);
-const C_COMMENT: Color32 = Color32::from_rgb(106, 153, 85);
-const C_GLOBAL: Color32 = Color32::from_rgb(86, 156, 214);
-const C_SERVICE: Color32 = Color32::from_rgb(78, 201, 176);
-const C_FUNCTION: Color32 = Color32::from_rgb(220, 220, 170);
+/// Resolved syntax colors (from the user's [`SyntaxTheme`] setting) used by the
+/// highlighter and completion popup.
+#[derive(Clone, Copy)]
+pub struct SyntaxColors {
+    pub text: Color32,
+    pub keyword: Color32,
+    pub string: Color32,
+    pub number: Color32,
+    pub comment: Color32,
+    pub global: Color32,
+    pub service: Color32,
+    pub function: Color32,
+}
+
+impl SyntaxColors {
+    pub fn from_theme(t: &SyntaxTheme) -> Self {
+        let c = |a: [u8; 3]| Color32::from_rgb(a[0], a[1], a[2]);
+        Self {
+            text: c(t.text),
+            keyword: c(t.keyword),
+            string: c(t.string),
+            number: c(t.number),
+            comment: c(t.comment),
+            global: c(t.global),
+            service: c(t.service),
+            function: c(t.function),
+        }
+    }
+}
+
+impl Default for SyntaxColors {
+    fn default() -> Self {
+        Self::from_theme(&SyntaxTheme::default())
+    }
+}
+
+/// Accent for the active parameter in signature help (fixed, not themed).
+const C_SIG_ACTIVE: Color32 = Color32::from_rgb(220, 220, 170);
 const C_ERR: Color32 = Color32::from_rgb(235, 100, 100);
 const C_WARN: Color32 = Color32::from_rgb(230, 190, 80);
 const C_INFO: Color32 = Color32::from_rgb(90, 160, 230);
@@ -1111,7 +1145,7 @@ const SERVICES: &[&str] = &[
     "CollectionService",
 ];
 
-fn highlight(text: &str, font_size: f32) -> LayoutJob {
+fn highlight(text: &str, font_size: f32, colors: &SyntaxColors) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.wrap.max_width = f32::INFINITY;
     let b = text.as_bytes();
@@ -1143,7 +1177,7 @@ fn highlight(text: &str, font_size: f32) -> LayoutJob {
                 let end = memchr(b, i + 2, b'\n').unwrap_or(n);
                 i = end;
             }
-            seg(&mut job, start..i, C_COMMENT);
+            seg(&mut job, start..i, colors.comment);
         } else if c == b'"' || c == b'\'' {
             let start = i;
             i += 1;
@@ -1158,12 +1192,12 @@ fn highlight(text: &str, font_size: f32) -> LayoutJob {
                 }
             }
             i = i.min(n);
-            seg(&mut job, start..i, C_STRING);
+            seg(&mut job, start..i, colors.string);
         } else if c == b'[' && next == b'[' {
             let start = i;
             let end = find2(b, i + 2, b']', b']').map(|e| e + 2).unwrap_or(n);
             i = end;
-            seg(&mut job, start..i, C_STRING);
+            seg(&mut job, start..i, colors.string);
         } else if c.is_ascii_digit() || (c == b'.' && next.is_ascii_digit()) {
             let start = i;
             i += 1;
@@ -1180,7 +1214,7 @@ fn highlight(text: &str, font_size: f32) -> LayoutJob {
                     break;
                 }
             }
-            seg(&mut job, start..i, C_NUMBER);
+            seg(&mut job, start..i, colors.number);
         } else if c.is_ascii_alphabetic() || c == b'_' {
             let start = i;
             while i < n && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
@@ -1188,15 +1222,15 @@ fn highlight(text: &str, font_size: f32) -> LayoutJob {
             }
             let word = &text[start..i];
             let color = if KEYWORDS.contains(&word) {
-                C_KEYWORD
+                colors.keyword
             } else if SERVICES.contains(&word) {
-                C_SERVICE
+                colors.service
             } else if GLOBALS.contains(&word) {
-                C_GLOBAL
+                colors.global
             } else if is_call(b, i) {
-                C_FUNCTION
+                colors.function
             } else {
-                C_DEFAULT
+                colors.text
             };
             seg(&mut job, start..i, color);
         } else {
@@ -1205,7 +1239,7 @@ fn highlight(text: &str, font_size: f32) -> LayoutJob {
             while i < n && !is_token_start(b, i) {
                 i += char_len(text, i);
             }
-            seg(&mut job, start..i, C_DEFAULT);
+            seg(&mut job, start..i, colors.text);
         }
     }
     job
@@ -1245,7 +1279,7 @@ fn find2(b: &[u8], from: usize, a: u8, c: u8) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{highlight, parse_error_location};
+    use super::{SyntaxColors, highlight, parse_error_location};
 
     #[test]
     fn highlight_reconstructs_input_exactly() {
@@ -1264,7 +1298,7 @@ mod tests {
             "local emoji = \"héllo 🌟 wörld\"\n",
         ];
         for s in samples {
-            let job = highlight(s, 14.0);
+            let job = highlight(s, 14.0, &SyntaxColors::default());
             assert_eq!(job.text, s, "coverage mismatch for {s:?}");
         }
     }

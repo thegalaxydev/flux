@@ -10,6 +10,7 @@ mod language;
 mod launcher;
 mod properties;
 mod script_editor;
+mod settings;
 mod textures;
 mod viewport;
 

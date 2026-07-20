@@ -107,6 +107,10 @@ pub struct EditorApp {
     title: String,
     /// Set when the user asks to return to the launcher; the outer app drains it.
     go_home: bool,
+    settings: crate::settings::Settings,
+    settings_open: bool,
+    /// Applied on the first frame (visuals need the egui context).
+    settings_applied: bool,
 }
 
 const SC_UNDO: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
@@ -141,6 +145,88 @@ impl EditorApp {
             allow_close: false,
             title: String::new(),
             go_home: false,
+            settings: crate::settings::Settings::load(),
+            settings_open: false,
+            settings_applied: false,
+        }
+    }
+
+    /// Push the persisted settings into live state. Visuals need the egui
+    /// context, so this runs on the first frame and whenever settings change.
+    fn apply_settings(&mut self, ctx: &egui::Context) {
+        ctx.set_visuals(if self.settings.theme_dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        });
+        self.editor.font_size = self.settings.font_size;
+        self.ui.grid_size = self.settings.grid_size;
+        self.ui.grid_snap = self.settings.grid_snap;
+    }
+
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+        let mut open = self.settings_open;
+        let mut changed = false;
+        let mut reset = false;
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().max_height(480.0).show(ui, |ui| {
+                    ui.strong("Appearance");
+                    changed |= ui.checkbox(&mut self.settings.theme_dark, "Dark theme").changed();
+                    ui.add_space(10.0);
+
+                    ui.strong("Script editor");
+                    ui.horizontal(|ui| {
+                        ui.label("Font size");
+                        changed |= ui
+                            .add(egui::Slider::new(&mut self.settings.font_size, 9.0..=28.0))
+                            .changed();
+                    });
+                    ui.add_space(4.0);
+                    ui.label("Syntax colors");
+                    let s = &mut self.settings.syntax;
+                    changed |= color_row(ui, "Text", &mut s.text);
+                    changed |= color_row(ui, "Keyword", &mut s.keyword);
+                    changed |= color_row(ui, "String", &mut s.string);
+                    changed |= color_row(ui, "Number", &mut s.number);
+                    changed |= color_row(ui, "Comment", &mut s.comment);
+                    changed |= color_row(ui, "Global", &mut s.global);
+                    changed |= color_row(ui, "Service / Instance", &mut s.service);
+                    changed |= color_row(ui, "Function", &mut s.function);
+                    if ui.button("Reset colors to default").clicked() {
+                        reset = true;
+                    }
+                    ui.add_space(10.0);
+
+                    ui.strong("Grid");
+                    changed |= ui
+                        .checkbox(&mut self.settings.grid_snap, "Snap to grid by default")
+                        .changed();
+                    ui.horizontal(|ui| {
+                        ui.label("Grid size");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.settings.grid_size)
+                                    .range(1.0..=512.0),
+                            )
+                            .changed();
+                    });
+                });
+            });
+        if reset {
+            self.settings.syntax = crate::settings::SyntaxTheme::default();
+            changed = true;
+        }
+        self.settings_open = open;
+        if changed {
+            self.apply_settings(ctx);
+            self.settings.save();
         }
     }
 
@@ -588,6 +674,10 @@ impl EditorApp {
                         }
                     });
                     ui.separator();
+                    if ui.button("Settings…").clicked() {
+                        self.settings_open = true;
+                        ui.close();
+                    }
                     if ui.button("Exit").clicked() {
                         self.request(ctx, FileOp::Exit);
                         ui.close();
@@ -824,11 +914,9 @@ impl EditorApp {
                         .button(ui)
                         .on_hover_text("Toggle light/dark theme");
                     if toggle.clicked() {
-                        ctx.set_visuals(if dark {
-                            egui::Visuals::light()
-                        } else {
-                            egui::Visuals::dark()
-                        });
+                        self.settings.theme_dark = !self.settings.theme_dark;
+                        self.apply_settings(ctx);
+                        self.settings.save();
                     }
                 });
             });
@@ -1091,6 +1179,17 @@ fn script_instance(world: &World, rel: &str) -> Option<InstanceId> {
     })
 }
 
+/// A "[swatch] Label" row for the settings syntax-color list; returns whether
+/// the color changed this frame.
+fn color_row(ui: &mut egui::Ui, label: &str, c: &mut [u8; 3]) -> bool {
+    ui.horizontal(|ui| {
+        let changed = ui.color_edit_button_srgb(c).changed();
+        ui.label(label);
+        changed
+    })
+    .inner
+}
+
 /// A safe default file name for a generated source file. `*.module.luau` is
 /// recognised as a Module, a plain `*.luau` as a Script (see `flux_render`).
 fn source_file_name(instance_name: &str, is_module: bool) -> String {
@@ -1132,6 +1231,10 @@ impl eframe::App for EditorApp {
             self.confirm = Some(FileOp::Exit);
         }
 
+        if !self.settings_applied {
+            self.settings_applied = true;
+            self.apply_settings(ctx);
+        }
         self.icons.sync_theme_from(&ctx.style().visuals);
         if let Some(root) = self.project_root() {
             self.textures.poll_hot_reload(ctx, &root);
@@ -1155,6 +1258,7 @@ impl eframe::App for EditorApp {
                 textures,
                 anim_cache,
                 editor,
+                settings,
                 ..
             } = &mut *self;
             let guard;
@@ -1222,6 +1326,7 @@ impl eframe::App for EditorApp {
                                 &mut editor.assist,
                                 icons,
                                 Some(&nav),
+                                &settings.syntax,
                             );
                         }
                     }
@@ -1283,6 +1388,7 @@ impl eframe::App for EditorApp {
             self.create_source_for(id);
         }
 
+        self.settings_window(ctx);
         self.confirm_modal(ctx);
         self.script_warn_modal(ctx);
         self.close_tab_modal(ctx);
