@@ -63,6 +63,8 @@ pub enum AssetKind {
     TileSet,
     /// A `*.worldgen.json` procedural world-generation config.
     WorldGen,
+    /// A `*.buildings.json` building catalog.
+    BuildingCatalog,
     Prefab,
     Package,
     Font,
@@ -82,6 +84,9 @@ pub fn classify(name: &str, is_dir: bool) -> AssetKind {
     }
     if lower.ends_with(".worldgen.json") {
         return AssetKind::WorldGen;
+    }
+    if lower.ends_with(".buildings.json") {
+        return AssetKind::BuildingCatalog;
     }
     // A sprite-frame library (named clips). `.spriteframes` is the user-facing
     // extension; `.frames.json` is still recognized for older assets.

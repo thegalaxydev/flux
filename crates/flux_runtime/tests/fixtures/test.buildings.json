@@ -1,0 +1,6 @@
+{
+  "buildings": [
+    { "id": "belt",    "name": "Conveyor", "size": [1, 1], "color": [0.5, 0.5, 0.55, 1] },
+    { "id": "smelter", "name": "Smelter",  "size": [2, 2], "color": [0.8, 0.3, 0.2, 1], "category": "production" }
+  ]
+}

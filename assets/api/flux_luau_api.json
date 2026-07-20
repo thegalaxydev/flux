@@ -246,7 +246,13 @@
         "SetOre": { "kind": "method", "params": [{ "name": "x", "type": "number" }, { "name": "y", "type": "number" }, { "name": "id", "type": "string?" }, { "name": "amount", "type": "number?" }], "returns": "boolean", "doc": "Tilemap only: place ore `id` with `amount` at (x, y); pass nil id to clear. Returns false if out of bounds." },
         "MineOre": { "kind": "method", "params": [{ "name": "x", "type": "number" }, { "name": "y", "type": "number" }, { "name": "amount", "type": "number" }], "returns": "number", "doc": "Tilemap only: remove up to `amount` from the ore at (x, y), clearing it when depleted. Returns how much was removed." },
         "TileToWorld": { "kind": "method", "params": [{ "name": "col", "type": "number" }, { "name": "row", "type": "number" }], "returns": "Vec2", "doc": "Tilemap only: world position of the centre of tile (col, row)." },
-        "WorldToTile": { "kind": "method", "params": [{ "name": "worldPos", "type": "Vec2" }], "returns": "(number, number)", "doc": "Tilemap only: the (col, row) of the tile containing a world position." }
+        "WorldToTile": { "kind": "method", "params": [{ "name": "worldPos", "type": "Vec2" }], "returns": "(number, number)", "doc": "Tilemap only: the (col, row) of the tile containing a world position." },
+        "CanPlace": { "kind": "method", "params": [{ "name": "type", "type": "string" }, { "name": "col", "type": "number" }, { "name": "row", "type": "number" }], "returns": "boolean", "doc": "Tilemap only: whether a building of the given catalog type fits at (col, row) — in bounds and not overlapping another building." },
+        "PlaceBuilding": { "kind": "method", "params": [{ "name": "type", "type": "string" }, { "name": "col", "type": "number" }, { "name": "row", "type": "number" }], "returns": "Instance?", "doc": "Tilemap only: place a building from the Buildings catalog at (col, row). Returns the new Building instance, or nil if it can't be placed." },
+        "GetBuildingAt": { "kind": "method", "params": [{ "name": "col", "type": "number" }, { "name": "row", "type": "number" }], "returns": "Instance?", "doc": "Tilemap only: the Building whose footprint covers (col, row), or nil." },
+        "RemoveBuilding": { "kind": "method", "params": [{ "name": "col", "type": "number" }, { "name": "row", "type": "number" }], "returns": "boolean", "doc": "Tilemap only: remove the building covering (col, row). Returns whether one was removed." },
+        "ScreenToWorld": { "kind": "method", "params": [{ "name": "screenPos", "type": "Vec2" }], "returns": "Vec2", "doc": "Camera2D only: convert a viewport pixel position to a world position." },
+        "WorldToScreen": { "kind": "method", "params": [{ "name": "worldPos", "type": "Vec2" }], "returns": "Vec2", "doc": "Camera2D only: convert a world position to a viewport pixel position." }
       }
     },
     "Vec2": {

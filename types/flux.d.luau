@@ -171,6 +171,14 @@ declare class Instance
 	function MineOre(self, x: number, y: number, amount: number): number
 	function TileToWorld(self, col: number, row: number): Vec2
 	function WorldToTile(self, worldPos: Vec2): (number, number)
+	-- Tilemap only: data-driven building placement (from its Buildings catalog).
+	function CanPlace(self, buildingType: string, col: number, row: number): boolean
+	function PlaceBuilding(self, buildingType: string, col: number, row: number): Instance?
+	function GetBuildingAt(self, col: number, row: number): Instance?
+	function RemoveBuilding(self, col: number, row: number): boolean
+	-- Camera2D only: viewport pixels <-> world position.
+	function ScreenToWorld(self, screenPos: Vec2): Vec2
+	function WorldToScreen(self, worldPos: Vec2): Vec2
 	-- Child instances and engine properties are accessed dynamically by name.
 	[string]: any
 end

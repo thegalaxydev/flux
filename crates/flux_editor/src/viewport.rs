@@ -131,6 +131,7 @@ fn node_for_asset(rel: &str) -> Option<(&'static str, &'static str)> {
         flux_render::AssetKind::Animation => Some(("AnimatedSprite", "Frames")),
         flux_render::AssetKind::TileSet => Some(("Tilemap", "TileSet")),
         flux_render::AssetKind::WorldGen => Some(("Tilemap", "WorldGen")),
+        flux_render::AssetKind::BuildingCatalog => Some(("Tilemap", "Buildings")),
         _ => None,
     }
 }

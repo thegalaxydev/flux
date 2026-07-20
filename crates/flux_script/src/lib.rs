@@ -138,6 +138,15 @@ pub(crate) fn asset_root(lua: &Lua) -> PathBuf {
         .unwrap_or_default()
 }
 
+/// Shared building-catalog cache, in Lua app data for `Tilemap:PlaceBuilding`.
+pub(crate) type BuildingCacheHandle = Rc<RefCell<flux_core::building::BuildingCatalogCache>>;
+
+pub(crate) fn building_cache_handle(lua: &Lua) -> BuildingCacheHandle {
+    lua.app_data_ref::<BuildingCacheHandle>()
+        .expect("building cache app data missing")
+        .clone()
+}
+
 pub struct ScriptHost {
     lua: Lua,
     world: WorldHandle,
@@ -189,6 +198,8 @@ impl ScriptHost {
         lua.set_app_data(ModuleCache::default());
         let tile_cache: TileCacheHandle = Rc::new(RefCell::new(Default::default()));
         lua.set_app_data(tile_cache.clone());
+        let building_cache: BuildingCacheHandle = Rc::new(RefCell::new(Default::default()));
+        lua.set_app_data(building_cache);
 
         setup_globals(&lua, &world, &scheduler, &log).map_err(|e| e.to_string())?;
         lua.globals()

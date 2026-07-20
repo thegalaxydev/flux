@@ -126,6 +126,7 @@ pub fn draw_scene(
         if world.class_name(id) == Some("Tilemap") {
             if let Some(aabb) = draw_tilemap(
                 painter, ctx, textures, tiles, root, world, id, rect, &to_screen, &to_world,
+                &mut drawn,
             ) {
                 let visible = matches!(world.get_prop(id, "Visible"), Some(Value::Bool(true)));
                 let locked = matches!(world.get_prop(id, "Locked"), Some(Value::Bool(true)));
@@ -280,6 +281,7 @@ fn draw_tilemap(
     rect: Rect,
     to_screen: &impl Fn(f32, f32) -> Pos2,
     to_world: &impl Fn(Pos2) -> glam::Vec2,
+    hits: &mut Vec<(InstanceId, Rect)>,
 ) -> Option<Rect> {
     let grid = world.tile_grid(id)?;
     let pos = match world.get_prop(id, "Position") {
@@ -370,7 +372,89 @@ fn draw_tilemap(
             }
         }
     }
+
+    draw_buildings(painter, world, id, pos, tw, th, rect, to_screen, hits);
     Some(map_aabb)
+}
+
+/// Draw the `Building` children of a tilemap as footprint diamonds, back-to-front,
+/// pushing each visible/unlocked building's screen AABB into `hits` for picking.
+#[allow(clippy::too_many_arguments)]
+fn draw_buildings(
+    painter: &Painter,
+    world: &World,
+    tilemap: InstanceId,
+    pos: glam::Vec2,
+    tw: f32,
+    th: f32,
+    rect: Rect,
+    to_screen: &impl Fn(f32, f32) -> Pos2,
+    hits: &mut Vec<(InstanceId, Rect)>,
+) {
+    let mut buildings: Vec<(InstanceId, i32, i32, i32, i32)> = world
+        .children(tilemap)
+        .iter()
+        .copied()
+        .filter(|&c| world.class_name(c) == Some("Building"))
+        .filter_map(|c| {
+            let cell = match world.get_prop(c, "Cell") {
+                Some(Value::Vec2(v)) => *v,
+                _ => return None,
+            };
+            let fp = match world.get_prop(c, "Footprint") {
+                Some(Value::Vec2(v)) => *v,
+                _ => glam::Vec2::ONE,
+            };
+            Some((
+                c,
+                cell.x as i32,
+                cell.y as i32,
+                (fp.x as i32).max(1),
+                (fp.y as i32).max(1),
+            ))
+        })
+        .collect();
+    // Back-to-front: smaller (col+row) is farther from the camera.
+    buildings.sort_by_key(|&(_, col, row, _, _)| col + row);
+
+    for (bid, col, row, w, h) in buildings {
+        if !matches!(world.get_prop(bid, "Visible"), Some(Value::Bool(true))) {
+            continue;
+        }
+        // Outer corners of the w x h footprint region (top, right, bottom, left).
+        let tc = |c: i32, r: i32, i: usize| {
+            let p = flux_core::tilemap::tile_corners(c, r, tw, th)[i];
+            to_screen(pos.x + p.x, pos.y + p.y)
+        };
+        let quad = [
+            tc(col, row, 0),                 // top
+            tc(col + w - 1, row, 1),         // right
+            tc(col + w - 1, row + h - 1, 2), // bottom
+            tc(col, row + h - 1, 3),         // left
+        ];
+        let aabb = screen_aabb(&quad);
+        if !rect.intersects(aabb) {
+            continue;
+        }
+        let color = match world.get_prop(bid, "Color") {
+            Some(Value::Color(c)) => *c,
+            _ => Color::WHITE,
+        };
+        let outline = Color {
+            r: color.r * 0.55,
+            g: color.g * 0.55,
+            b: color.b * 0.55,
+            a: color.a,
+        };
+        painter.add(Shape::convex_polygon(
+            quad.to_vec(),
+            to_color(&color),
+            Stroke::new(1.5, to_color(&outline)),
+        ));
+        if !matches!(world.get_prop(bid, "Locked"), Some(Value::Bool(true))) {
+            hits.push((bid, aabb));
+        }
+    }
 }
 
 /// Resolve a tile index to its `(colour, atlas rect)`, falling back to a default

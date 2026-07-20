@@ -17,6 +17,7 @@ pub enum AssetType {
     SpriteFrames,
     TileSet,
     WorldGen,
+    BuildingCatalog,
     Script,
     Audio,
     Material,
@@ -234,11 +235,27 @@ impl ClassRegistry {
             vec![
                 asset_prop("TileSet", AssetType::TileSet),
                 asset_prop("WorldGen", AssetType::WorldGen),
+                asset_prop("Buildings", AssetType::BuildingCatalog),
                 prop("TileWidth", Value::Number(64.0)),
                 prop("TileHeight", Value::Number(32.0)),
                 prop("MapWidth", Value::Number(64.0)),
                 prop("MapHeight", Value::Number(64.0)),
                 prop("Seed", Value::Number(0.0)),
+            ],
+        );
+        // A building placed on a Tilemap grid. Visuals are baked into props at
+        // placement time (see `crate::building`), so rendering/serialization need
+        // no catalog. `Cell` is (col, row); `Footprint` is (width, height) tiles.
+        reg.add(
+            "Building",
+            Some("Node2D"),
+            true,
+            false,
+            vec![
+                prop("Type", Value::String(String::new())),
+                prop("Cell", Value::Vec2(Vec2::ZERO)),
+                prop("Footprint", Value::Vec2(Vec2::ONE)),
+                prop("Color", Value::Color(Color::WHITE)),
             ],
         );
         // The 2D camera. `Position`/`Zoom` are the live view; the rest configure

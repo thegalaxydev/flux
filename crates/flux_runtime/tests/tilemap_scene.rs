@@ -107,3 +107,46 @@ fn lua_tile_api_reads_writes_and_mines() {
     let cell = w.tile_grid(map).unwrap().cell(1, 1).unwrap();
     assert!(!cell.has_ore(), "ore should be fully mined out");
 }
+
+/// Build a scene with a `Tilemap` named "Map" carrying a Buildings catalog,
+/// driven by `script_path`.
+fn building_scene(script_path: &str) -> String {
+    let mut w = World::new();
+    let ws = w.workspace();
+    let map = w.create("Tilemap", ws).unwrap();
+    w.set_name(map, "Map").unwrap();
+    w.set_prop(map, "TileSet", Value::Asset("test.tileset.json".into()))
+        .unwrap();
+    w.set_prop(map, "Buildings", Value::Asset("test.buildings.json".into()))
+        .unwrap();
+    w.set_prop(map, "MapWidth", Value::Number(16.0)).unwrap();
+    w.set_prop(map, "MapHeight", Value::Number(16.0)).unwrap();
+
+    let script = w.create("Script", map).unwrap();
+    w.set_prop(script, "SourcePath", Value::Asset(script_path.into()))
+        .unwrap();
+    w.to_json()
+}
+
+#[test]
+fn lua_building_placement_and_camera_conversion() {
+    let json = building_scene("scripts/test_buildings.luau");
+    let session = Session::from_scene_json(&json, fixtures()).expect("scene loads");
+    let logs: Vec<String> = session
+        .drain_logs()
+        .into_iter()
+        .filter(|l| l.level == LogLevel::Info)
+        .map(|l| l.message)
+        .collect();
+
+    let has = |s: &str| logs.iter().any(|m| m == s);
+    assert!(has("canplace true"), "CanPlace: {logs:?}");
+    assert!(has("placed true"), "PlaceBuilding: {logs:?}");
+    assert!(has("class Building"), "new node class: {logs:?}");
+    assert!(has("type smelter"), "Type prop baked in: {logs:?}");
+    assert!(has("at33 true"), "GetBuildingAt covers footprint: {logs:?}");
+    assert!(has("blocked true"), "overlap refused: {logs:?}");
+    assert!(has("removed true"), "RemoveBuilding: {logs:?}");
+    assert!(has("gone true"), "cell freed after removal: {logs:?}");
+    assert!(has("cam true"), "ScreenToWorld/WorldToScreen round-trip: {logs:?}");
+}

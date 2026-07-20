@@ -102,6 +102,39 @@ fn tileset_of(
     ts
 }
 
+fn is_camera(w: &World, id: InstanceId) -> bool {
+    w.class_name(id) == Some("Camera2D")
+}
+
+/// A camera's `(Position, Zoom)` for screen<->world conversion.
+fn camera_view(w: &World, id: InstanceId) -> (glam::Vec2, f32) {
+    let pos = match w.get_prop(id, "Position") {
+        Some(Value::Vec2(p)) => *p,
+        _ => glam::Vec2::ZERO,
+    };
+    let zoom = match w.get_prop(id, "Zoom") {
+        Some(Value::Number(z)) => (*z as f32).max(1e-3),
+        _ => 1.0,
+    };
+    (pos, zoom)
+}
+
+/// Resolve a `Tilemap`'s `Buildings` catalog via the shared (Lua app-data) cache.
+fn catalog_of(
+    lua: &Lua,
+    w: &World,
+    id: InstanceId,
+) -> Option<std::rc::Rc<flux_core::building::BuildingCatalog>> {
+    let path = match w.get_prop(id, "Buildings") {
+        Some(Value::Asset(s)) if !s.is_empty() => s.clone(),
+        _ => return None,
+    };
+    let cache = crate::building_cache_handle(lua);
+    let root = crate::asset_root(lua);
+    let cat = cache.borrow_mut().get(&path, &root);
+    cat
+}
+
 /// A `Tilemap`'s footprint (`tile_width`, `tile_height`) and world `Position`.
 fn tilemap_geom(w: &World, id: InstanceId) -> (f32, f32, glam::Vec2) {
     let num = |name, d: f32| match w.get_prop(id, name) {
@@ -404,6 +437,102 @@ impl UserData for LuaInstance {
             let (tw, th, pos) = tilemap_geom(&w, this.0);
             let (col, row) = flux_core::tilemap::world_to_tile(world_p - pos, tw, th);
             Ok((col, row))
+        });
+        // ---- Tilemap building placement ----
+        m.add_method("CanPlace", |lua, this, (ty, col, row): (String, i32, i32)| {
+            let cat = {
+                let rc = world_handle(lua);
+                let w = rc.borrow();
+                check(&w, this.0)?;
+                if !is_tilemap(&w, this.0) {
+                    return Err(tilemap_only("CanPlace"));
+                }
+                match catalog_of(lua, &w, this.0) {
+                    Some(c) => c,
+                    None => return Ok(false),
+                }
+            };
+            let Some(def) = cat.get(&ty) else {
+                return Ok(false);
+            };
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            Ok(flux_core::building::can_place(&w, this.0, def, col, row))
+        });
+        m.add_method(
+            "PlaceBuilding",
+            |lua, this, (ty, col, row): (String, i32, i32)| {
+                let cat = {
+                    let rc = world_handle(lua);
+                    let w = rc.borrow();
+                    check(&w, this.0)?;
+                    if !is_tilemap(&w, this.0) {
+                        return Err(tilemap_only("PlaceBuilding"));
+                    }
+                    catalog_of(lua, &w, this.0).ok_or_else(|| {
+                        mlua::Error::RuntimeError(
+                            "PlaceBuilding: Tilemap has no Buildings catalog".to_string(),
+                        )
+                    })?
+                };
+                let def = cat.get(&ty).ok_or_else(|| {
+                    mlua::Error::RuntimeError(format!("PlaceBuilding: unknown building '{ty}'"))
+                })?;
+                let rc = world_handle(lua);
+                let mut w = rc.borrow_mut();
+                Ok(flux_core::building::place(&mut w, this.0, def, col, row).map(LuaInstance))
+            },
+        );
+        m.add_method("GetBuildingAt", |lua, this, (col, row): (i32, i32)| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_tilemap(&w, this.0) {
+                return Err(tilemap_only("GetBuildingAt"));
+            }
+            Ok(flux_core::building::building_at(&w, this.0, col, row).map(LuaInstance))
+        });
+        m.add_method("RemoveBuilding", |lua, this, (col, row): (i32, i32)| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            if !is_tilemap(&w, this.0) {
+                return Err(tilemap_only("RemoveBuilding"));
+            }
+            Ok(flux_core::building::remove_at(&mut w, this.0, col, row))
+        });
+        // ---- Camera2D screen<->world conversion ----
+        m.add_method("ScreenToWorld", |lua, this, v: LuaValue| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_camera(&w, this.0) {
+                return Err(mlua::Error::RuntimeError(
+                    "ScreenToWorld can only be called on a Camera2D".to_string(),
+                ));
+            }
+            let s = as_vec2(&v).ok_or_else(|| {
+                mlua::Error::RuntimeError("ScreenToWorld expects a Vec2".to_string())
+            })?;
+            let (pos, zoom) = camera_view(&w, this.0);
+            let viewport = input_handle(lua).borrow().viewport;
+            LuaVec2(pos + (s - viewport * 0.5) / zoom).into_lua(lua)
+        });
+        m.add_method("WorldToScreen", |lua, this, v: LuaValue| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            if !is_camera(&w, this.0) {
+                return Err(mlua::Error::RuntimeError(
+                    "WorldToScreen can only be called on a Camera2D".to_string(),
+                ));
+            }
+            let world = as_vec2(&v).ok_or_else(|| {
+                mlua::Error::RuntimeError("WorldToScreen expects a Vec2".to_string())
+            })?;
+            let (pos, zoom) = camera_view(&w, this.0);
+            let viewport = input_handle(lua).borrow().viewport;
+            LuaVec2((world - pos) * zoom + viewport * 0.5).into_lua(lua)
         });
         m.add_meta_method(MetaMethod::Index, |lua, this, key: String| {
             index(lua, this.0, &key)
