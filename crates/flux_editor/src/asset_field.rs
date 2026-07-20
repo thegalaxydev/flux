@@ -122,13 +122,24 @@ pub fn asset_field(
         } else {
             (basename(value).to_string(), ui.visuals().text_color())
         };
-        ui.painter().text(
-            rect.left_center() + vec2(6.0, 0.0),
-            egui::Align2::LEFT_CENTER,
+        // Truncate a long name with an ellipsis so it never spills past the box.
+        let mut job = egui::text::LayoutJob::single_section(
             text,
-            egui::FontId::proportional(12.0),
-            color,
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(12.0),
+                color,
+                ..Default::default()
+            },
         );
+        job.wrap = egui::text::TextWrapping {
+            max_width: (rect.width() - 10.0).max(0.0),
+            max_rows: 1,
+            overflow_character: Some('…'),
+            ..Default::default()
+        };
+        let galley = ui.painter().layout_job(job);
+        let pos = egui::pos2(rect.left() + 6.0, rect.center().y - galley.size().y * 0.5);
+        ui.painter().galley(pos, galley, color);
 
         // Accept a compatible drop; double-click opens the referenced asset.
         if let Some(p) = resp.dnd_release_payload::<AssetDrag>() {
