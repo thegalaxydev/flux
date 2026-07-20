@@ -1104,12 +1104,7 @@ impl EditorApp {
     fn status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let name = self
-                    .path
-                    .as_ref()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Untitled".to_string());
+                let name = self.scene_name();
                 ui.label(format!("{name}{}", if self.dirty { " *" } else { "" }));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(&self.ui.status);
@@ -1118,13 +1113,24 @@ impl EditorApp {
         });
     }
 
+    /// The scene's display name: the file name without its `.scene.json`/`.json`
+    /// extension (e.g. `main.scene.json` -> `main`).
+    fn scene_name(&self) -> String {
+        let Some(file) = self.path.as_ref().and_then(|p| p.file_name()) else {
+            return "Untitled".to_string();
+        };
+        let file = file.to_string_lossy();
+        if file.to_ascii_lowercase().ends_with(".scene.json") {
+            file[..file.len() - ".scene.json".len()].to_string()
+        } else if let Some((stem, _)) = file.rsplit_once('.') {
+            stem.to_string()
+        } else {
+            file.into_owned()
+        }
+    }
+
     fn update_title(&mut self, ctx: &egui::Context) {
-        let name = self
-            .path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".to_string());
+        let name = self.scene_name();
         let title = format!("Flux Editor — {name}{}", if self.dirty { " *" } else { "" });
         if title != self.title {
             self.title = title.clone();
