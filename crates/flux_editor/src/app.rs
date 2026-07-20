@@ -1082,6 +1082,15 @@ impl EditorApp {
     }
 }
 
+/// The first Script/Module instance whose source is the file `rel` — what
+/// `script` resolves to for hierarchy-aware completion in that file.
+fn script_instance(world: &World, rel: &str) -> Option<InstanceId> {
+    world.descendants(world.root()).into_iter().find(|&id| {
+        matches!(world.class_name(id), Some("Script") | Some("Module"))
+            && matches!(world.get_prop(id, "SourcePath"), Some(Value::Asset(p)) if p == rel)
+    })
+}
+
 /// A safe default file name for a generated source file. `*.module.luau` is
 /// recognised as a Module, a plain `*.luau` as a Script (see `flux_render`).
 fn source_file_name(instance_name: &str, is_module: bool) -> String {
@@ -1196,6 +1205,14 @@ impl eframe::App for EditorApp {
                         );
                     }
                     ActiveTab::Script(i) => {
+                        // Resolve `script` to the instance the open file is
+                        // attached to, so completion can walk the hierarchy.
+                        let script_id =
+                            editor.tabs.get(i).and_then(|t| script_instance(active, &t.rel));
+                        let nav = crate::script_editor::SceneNav {
+                            world: active,
+                            script: script_id,
+                        };
                         if let Some(tab) = editor.tabs.get_mut(i) {
                             crate::script_editor::code_area(
                                 panel,
@@ -1204,6 +1221,7 @@ impl eframe::App for EditorApp {
                                 &mut editor.find,
                                 &mut editor.assist,
                                 icons,
+                                Some(&nav),
                             );
                         }
                     }

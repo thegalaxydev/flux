@@ -34,7 +34,7 @@ mod types;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-pub use completion::{Completion, CompletionKind, CompletionProvider};
+pub use completion::{Completion, CompletionKind, CompletionProvider, SceneResolver};
 pub use diagnostics::{Diagnostic, DiagnosticSeverity};
 pub use hover::{Hover, HoverProvider};
 pub use lex::{byte_of_char, char_of_byte, line_col};
@@ -98,12 +98,19 @@ impl ScriptLanguageService {
         }
     }
 
-    /// Completion suggestions for the cursor at char index `char_cursor`.
-    pub fn completions(&mut self, src: &str, char_cursor: usize) -> Vec<Completion> {
+    /// Completion suggestions for the cursor at char index `char_cursor`. Pass a
+    /// [`SceneResolver`] to include scene-tree children (e.g.
+    /// `script.Parent.Module`); `None` disables hierarchy completion.
+    pub fn completions(
+        &mut self,
+        src: &str,
+        char_cursor: usize,
+        scene: Option<&dyn SceneResolver>,
+    ) -> Vec<Completion> {
         let cursor = byte_of_char(src, char_cursor);
         self.analyze(src);
         let a = self.analysis.as_ref().unwrap();
-        self.completion.completions(self.builtins.db(), &a.index, src, cursor)
+        self.completion.completions(self.builtins.db(), &a.index, src, cursor, scene)
     }
 
     /// Hover info for the char index `char_pos` (e.g. under the pointer).
@@ -137,7 +144,7 @@ mod tests {
     fn service_end_to_end() {
         let mut svc = ScriptLanguageService::default();
         let src = "local Input = game:GetService(\"Input\")\nInput.";
-        let comps = svc.completions(src, src.chars().count());
+        let comps = svc.completions(src, src.chars().count(), None);
         assert!(comps.iter().any(|c| c.label == "IsKeyDown"));
 
         let byte_input = src.rfind("Input").unwrap();

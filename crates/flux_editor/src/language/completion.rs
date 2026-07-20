@@ -6,6 +6,16 @@ use super::context::{Ctx, completion_context};
 use super::lex::{KEYWORDS, Tok, tokenize};
 use super::symbols::SymbolIndex;
 
+/// Resolves scene-tree navigation for hierarchy-aware completion. Implemented by
+/// the editor over the live `World`, so this language module stays engine-
+/// agnostic.
+pub trait SceneResolver {
+    /// The `(name, class)` of each child of the instance reached by the base
+    /// expression (e.g. `"script.Parent"`, `"game.Workspace"`), or `None` if the
+    /// expression doesn't resolve to an instance.
+    fn children(&self, base: &str) -> Option<Vec<(String, String)>>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionKind {
     Keyword,
@@ -15,6 +25,8 @@ pub enum CompletionKind {
     Property,
     Event,
     Variable,
+    /// A child instance in the scene tree (e.g. `script.Parent.Module`).
+    Instance,
 }
 
 impl CompletionKind {
@@ -39,6 +51,7 @@ impl CompletionKind {
             CompletionKind::Property => "prop",
             CompletionKind::Event => "evt",
             CompletionKind::Variable => "var",
+            CompletionKind::Instance => "obj",
         }
     }
 }
@@ -62,13 +75,14 @@ impl CompletionProvider {
         idx: &SymbolIndex,
         src: &str,
         cursor: usize,
+        scene: Option<&dyn SceneResolver>,
     ) -> Vec<Completion> {
         // Don't offer suggestions while typing inside a string or comment.
         if in_literal(src, cursor) {
             return Vec::new();
         }
         match completion_context(src, cursor) {
-            Ctx::Member { base, prefix, .. } => member_completions(db, idx, &base, &prefix),
+            Ctx::Member { base, prefix, .. } => member_completions(db, idx, &base, &prefix, scene),
             Ctx::Ident { prefix, .. } => ident_completions(db, idx, &prefix),
             Ctx::None => Vec::new(),
         }
@@ -119,22 +133,46 @@ fn sort(list: &mut [Completion], prefix: &str) {
     });
 }
 
-fn member_completions(db: &ApiDb, idx: &SymbolIndex, base: &str, prefix: &str) -> Vec<Completion> {
+fn member_completions(
+    db: &ApiDb,
+    idx: &SymbolIndex,
+    base: &str,
+    prefix: &str,
+    scene: Option<&dyn SceneResolver>,
+) -> Vec<Completion> {
+    let mut list: Vec<Completion> = Vec::new();
+
+    // Scene children first: navigating the hierarchy through `script`, `game`, or
+    // `workspace` (e.g. `script.Parent.Module`) offers the resolved instance's
+    // children by name.
+    if let Some(children) = scene.and_then(|s| s.children(base)) {
+        for (name, class) in children {
+            if matches(&name, prefix) {
+                list.push(Completion {
+                    label: name.clone(),
+                    insert: name,
+                    kind: CompletionKind::Instance,
+                    detail: class,
+                    doc: String::new(),
+                });
+            }
+        }
+    }
+
+    // API members of the base's resolved type (plus a generic-Instance fallback
+    // for a bare local of unknown type, so `sprite.` still suggests Position...).
     let map = db.members_after(base, idx).or_else(|| {
-        // Fall back to generic Instance members for a bare local of unknown type
-        // (so `sprite.` suggests Position, Name, Destroy, ...).
         let simple = !base.contains(['.', ':', '(']) && idx.is_defined(base.trim());
         simple.then(|| db.members_of_type("Instance")).flatten()
     });
-    let Some(map) = map else {
-        return Vec::new();
-    };
-    let mut list: Vec<Completion> = map
-        .iter()
-        .filter(|(name, _)| matches(name, prefix))
-        .map(|(name, entry)| entry_completion(name, entry))
-        .collect();
+    if let Some(map) = map {
+        for (name, entry) in map.iter().filter(|(name, _)| matches(name, prefix)) {
+            list.push(entry_completion(name, entry));
+        }
+    }
+
     sort(&mut list, prefix);
+    list.dedup_by(|a, b| a.label == b.label);
     list
 }
 
@@ -199,7 +237,7 @@ mod tests {
         let db = ApiDb::load();
         let idx = SymbolIndex::default();
         let src = "Vec2.";
-        let list = CompletionProvider.completions(&db, &idx, src, src.len());
+        let list = CompletionProvider.completions(&db, &idx, src, src.len(), None);
         assert!(labels(&list).contains(&"new"));
     }
 
@@ -208,7 +246,7 @@ mod tests {
         let db = ApiDb::load();
         let src = "local Input = game:GetService(\"Input\")\nInput.";
         let idx = SymbolIndex::build(src);
-        let list = CompletionProvider.completions(&db, &idx, src, src.len());
+        let list = CompletionProvider.completions(&db, &idx, src, src.len(), None);
         assert!(labels(&list).contains(&"IsKeyDown"));
     }
 
@@ -217,7 +255,7 @@ mod tests {
         let db = ApiDb::load();
         let src = "local speed = 5\nsp";
         let idx = SymbolIndex::build(src);
-        let list = CompletionProvider.completions(&db, &idx, src, src.len());
+        let list = CompletionProvider.completions(&db, &idx, src, src.len(), None);
         assert!(labels(&list).contains(&"speed"));
     }
 
@@ -226,7 +264,7 @@ mod tests {
         let db = ApiDb::load();
         let idx = SymbolIndex::default();
         let src = "local s = \"Vec2.ne";
-        let list = CompletionProvider.completions(&db, &idx, src, src.len());
+        let list = CompletionProvider.completions(&db, &idx, src, src.len(), None);
         assert!(list.is_empty(), "should not complete inside a string: {list:?}");
     }
 
@@ -235,7 +273,42 @@ mod tests {
         let db = ApiDb::load();
         let src = "local sprite = workspace.Thing\nsprite.";
         let idx = SymbolIndex::build(src);
-        let list = CompletionProvider.completions(&db, &idx, src, src.len());
+        let list = CompletionProvider.completions(&db, &idx, src, src.len(), None);
         assert!(labels(&list).contains(&"Position"));
+    }
+
+    /// A stub resolver: `script.Parent` has a "Module" and a "Health" child.
+    struct Stub;
+    impl SceneResolver for Stub {
+        fn children(&self, base: &str) -> Option<Vec<(String, String)>> {
+            (base == "script.Parent").then(|| {
+                vec![
+                    ("Module".to_string(), "Module".to_string()),
+                    ("Health".to_string(), "Script".to_string()),
+                ]
+            })
+        }
+    }
+
+    #[test]
+    fn suggests_scene_children_through_hierarchy() {
+        let db = ApiDb::load();
+        let src = "print(script.Parent.)";
+        let cursor = src.find('.').unwrap() + ".Parent.".len();
+        let idx = SymbolIndex::build(src);
+        let list = CompletionProvider.completions(&db, &idx, src, cursor, Some(&Stub));
+        // Children of the resolved instance are offered by name...
+        assert!(labels(&list).contains(&"Module"));
+        assert!(labels(&list).contains(&"Health"));
+        // ...alongside Instance members from the API.
+        assert!(labels(&list).contains(&"Parent"));
+
+        // With a prefix, they filter.
+        let src2 = "print(script.Parent.Mo)";
+        let cursor2 = src2.rfind("Mo").unwrap() + 2;
+        let idx2 = SymbolIndex::build(src2);
+        let list2 = CompletionProvider.completions(&db, &idx2, src2, cursor2, Some(&Stub));
+        assert!(labels(&list2).contains(&"Module"));
+        assert!(!labels(&list2).contains(&"Health"));
     }
 }

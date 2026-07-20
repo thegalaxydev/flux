@@ -7,11 +7,61 @@ use eframe::egui::{
     text_edit::TextEditState,
     vec2,
 };
+use flux_core::{InstanceId, World};
 use flux_icons::{Icon, Icons};
 
 use crate::language::{
-    Completion, CompletionKind, Diagnostic, DiagnosticSeverity, ScriptLanguageService,
+    Completion, CompletionKind, Diagnostic, DiagnosticSeverity, SceneResolver, ScriptLanguageService,
 };
+
+/// Hierarchy-aware completion source over the live world: resolves `script`,
+/// `game`, and `workspace` navigations to instances and lists their children.
+pub struct SceneNav<'a> {
+    pub world: &'a World,
+    /// The instance the open script is attached to (what `script` resolves to).
+    pub script: Option<InstanceId>,
+}
+
+impl SceneResolver for SceneNav<'_> {
+    fn children(&self, base: &str) -> Option<Vec<(String, String)>> {
+        let inst = resolve_instance(self.world, self.script, base)?;
+        Some(
+            self.world
+                .children(inst)
+                .iter()
+                .filter_map(|&c| {
+                    Some((
+                        self.world.name(c)?.to_string(),
+                        self.world.class_name(c).unwrap_or("Instance").to_string(),
+                    ))
+                })
+                .collect(),
+        )
+    }
+}
+
+/// Walk a dotted base expression to an instance: a `script`/`game`/`workspace`
+/// root, then `.Parent` or `.ChildName` steps.
+fn resolve_instance(world: &World, script: Option<InstanceId>, base: &str) -> Option<InstanceId> {
+    let mut segs = base.split('.').map(str::trim);
+    let mut cur = match segs.next()? {
+        "script" => script?,
+        "game" => world.root(),
+        "workspace" => world.workspace(),
+        _ => return None,
+    };
+    for seg in segs {
+        if seg.is_empty() {
+            return None;
+        }
+        cur = if seg == "Parent" {
+            world.parent(cur)?
+        } else {
+            world.find_first_child(cur, seg)?
+        };
+    }
+    Some(cur)
+}
 
 const MIN_FONT: f32 = 9.0;
 const MAX_FONT: f32 = 28.0;
@@ -257,6 +307,7 @@ pub fn tab_strip(ui: &mut Ui, editor: &mut ScriptEditor, icons: &Icons) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn code_area(
     ui: &mut Ui,
     tab: &mut ScriptTab,
@@ -264,6 +315,7 @@ pub fn code_area(
     find: &mut FindState,
     assist: &mut Assist,
     icons: &Icons,
+    scene: Option<&dyn SceneResolver>,
 ) {
     let size = *font_size;
     let font = FontId::monospace(size);
@@ -474,7 +526,7 @@ pub fn code_area(
             assist.selected = 0;
             assist.dismissed = false;
         }
-        assist.completions = assist.svc.completions(&tab.buffer, cursor_char);
+        assist.completions = assist.svc.completions(&tab.buffer, cursor_char, scene);
         if assist.selected >= assist.completions.len() {
             assist.selected = 0;
         }
@@ -861,6 +913,7 @@ fn kind_color(ui: &Ui, kind: CompletionKind) -> Color32 {
         CompletionKind::Event => C_SERVICE,
         CompletionKind::Property => C_GLOBAL,
         CompletionKind::Variable => C_DEFAULT,
+        CompletionKind::Instance => C_SERVICE,
     }
 }
 
