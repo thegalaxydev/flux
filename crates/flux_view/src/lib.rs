@@ -69,6 +69,8 @@ pub fn game_camera(world: &World) -> Option<Camera> {
 pub struct RenderCtx {
     pub rect: Rect,
     pub camera: Camera,
+    /// Seconds since app start — lets overlays animate (pips, pulses).
+    pub time: f32,
 }
 
 impl RenderCtx {
@@ -259,7 +261,7 @@ pub fn draw_scene(
     // Plugin overlays (e.g. a game drawing its own nodes) render between the
     // world and the GUI.
     {
-        let overlay_ctx = RenderCtx { rect, camera };
+        let overlay_ctx = RenderCtx { rect, camera, time: ctx.input(|i| i.time) as f32 };
         for f in OVERLAYS.read().unwrap().iter() {
             f(painter, world, &overlay_ctx);
         }
@@ -371,39 +373,49 @@ fn draw_tilemap(
             let (color, src) = tile_visual(tileset.as_deref(), cell.tile);
             let tint = to_color(&color);
 
-            match (handle.as_ref(), tex_size) {
-                (Some(h), Some((tpw, tph))) if !src.is_whole() && tpw > 0.0 && tph > 0.0 => {
-                    // Textured tile: the atlas region fills the tile's
-                    // axis-aligned `tw x th` box (iso art bakes in the diamond).
-                    let c = flux_core::tilemap::tile_to_world(col, row, tw, th);
-                    let tl = to_screen(pos.x + c.x - tw * 0.5, pos.y + c.y - th * 0.5);
-                    let br = to_screen(pos.x + c.x + tw * 0.5, pos.y + c.y + th * 0.5);
-                    let uv = Rect::from_min_max(
-                        Pos2::new(src.x / tpw, src.y / tph),
-                        Pos2::new((src.x + src.w) / tpw, (src.y + src.h) / tph),
-                    );
-                    let mut mesh = Mesh::with_texture(h.id());
-                    mesh.add_rect_with_uv(Rect::from_two_pos(tl, br), uv, tint);
-                    painter.add(Shape::mesh(mesh));
+            // Draws the atlas region `src` into the tile's axis-aligned box
+            // scaled by `inset` (1 = whole tile). Textures are authored art, so
+            // they draw untinted — a tile's `color` is only the flat fallback.
+            let textured = |painter: &Painter, src: SrcRect, inset: f32| -> bool {
+                let (Some(h), Some((tpw, tph))) = (handle.as_ref(), tex_size) else {
+                    return false;
+                };
+                if src.is_whole() || tpw <= 0.0 || tph <= 0.0 {
+                    return false;
                 }
-                _ => {
-                    // Flat colour diamond.
-                    painter.add(Shape::convex_polygon(corners.to_vec(), tint, Stroke::NONE));
-                }
+                let c = flux_core::tilemap::tile_to_world(col, row, tw, th);
+                let tl = to_screen(pos.x + c.x - tw * 0.5 * inset, pos.y + c.y - th * 0.5 * inset);
+                let br = to_screen(pos.x + c.x + tw * 0.5 * inset, pos.y + c.y + th * 0.5 * inset);
+                let uv = Rect::from_min_max(
+                    Pos2::new(src.x / tpw, src.y / tph),
+                    Pos2::new((src.x + src.w) / tpw, (src.y + src.h) / tph),
+                );
+                let mut mesh = Mesh::with_texture(h.id());
+                mesh.add_rect_with_uv(Rect::from_two_pos(tl, br), uv, Color32::WHITE);
+                painter.add(Shape::mesh(mesh));
+                true
+            };
+
+            if !textured(painter, src, 1.0) {
+                // Flat colour diamond.
+                painter.add(Shape::convex_polygon(corners.to_vec(), tint, Stroke::NONE));
             }
 
-            // Ore deposit overlay: a smaller inset diamond in the ore's colour.
+            // Ore deposit overlay: atlas art when available, else an inset
+            // diamond in the ore's colour.
             if cell.has_ore() {
-                let (ore_color, _) = tile_visual(tileset.as_deref(), cell.ore);
-                let centre = to_screen(
-                    pos.x + flux_core::tilemap::tile_to_world(col, row, tw, th).x,
-                    pos.y + flux_core::tilemap::tile_to_world(col, row, tw, th).y,
-                );
-                let pip: Vec<Pos2> = corners
-                    .iter()
-                    .map(|c| centre + (*c - centre) * 0.5)
-                    .collect();
-                painter.add(Shape::convex_polygon(pip, to_color(&ore_color), Stroke::NONE));
+                let (ore_color, ore_src) = tile_visual(tileset.as_deref(), cell.ore);
+                if !textured(painter, ore_src, 0.9) {
+                    let centre = to_screen(
+                        pos.x + flux_core::tilemap::tile_to_world(col, row, tw, th).x,
+                        pos.y + flux_core::tilemap::tile_to_world(col, row, tw, th).y,
+                    );
+                    let pip: Vec<Pos2> = corners
+                        .iter()
+                        .map(|c| centre + (*c - centre) * 0.5)
+                        .collect();
+                    painter.add(Shape::convex_polygon(pip, to_color(&ore_color), Stroke::NONE));
+                }
             }
         }
     }

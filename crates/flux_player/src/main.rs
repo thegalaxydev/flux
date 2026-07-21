@@ -13,6 +13,15 @@ struct Player {
     anim: AnimationCache,
     tiles: TileSetCache,
     root: PathBuf,
+    shot: Option<Shot>,
+}
+
+/// `--screenshot` dev harness: run a fixed number of frames, capture the
+/// window, write a PNG, exit. Lets tooling (and agents) see the composed game.
+struct Shot {
+    out: PathBuf,
+    frames_left: u32,
+    requested: bool,
 }
 
 impl Player {
@@ -71,8 +80,40 @@ impl eframe::App for Player {
         if let Some(rel) = self.session.take_scene_request() {
             self.load_scene(&rel);
         }
+        if let Some(shot) = &mut self.shot {
+            if shot.frames_left > 0 {
+                shot.frames_left -= 1;
+            } else if !shot.requested {
+                shot.requested = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            } else {
+                let image = ctx.input(|i| {
+                    i.events.iter().find_map(|e| match e {
+                        egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                        _ => None,
+                    })
+                });
+                if let Some(img) = image {
+                    match save_screenshot(&img, &shot.out) {
+                        Ok(()) => eprintln!("screenshot written to {}", shot.out.display()),
+                        Err(e) => eprintln!("screenshot failed: {e}"),
+                    }
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
         ctx.request_repaint();
     }
+}
+
+fn save_screenshot(img: &egui::ColorImage, out: &Path) -> Result<(), String> {
+    let (w, h) = (img.size[0] as u32, img.size[1] as u32);
+    let mut png = image::RgbaImage::new(w, h);
+    for (i, px) in img.pixels.iter().enumerate() {
+        let (x, y) = (i as u32 % w, i as u32 / w);
+        png.put_pixel(x, y, image::Rgba(px.to_array()));
+    }
+    png.save(out).map_err(|e| e.to_string())
 }
 
 fn collect_input(ctx: &egui::Context, rect: egui::Rect) -> InputFrame {
@@ -108,9 +149,18 @@ fn main() -> eframe::Result {
     // Install the reactor-game plugin (classes, systems, Lua API, …) before any
     // world is created.
     flux_game::install();
-    let scene = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "projects/demo/main.scene.json".to_string());
+    let mut scene = None;
+    let mut shot_out: Option<PathBuf> = None;
+    let mut shot_frames = 90u32;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--screenshot" => shot_out = args.next().map(PathBuf::from),
+            "--frames" => shot_frames = args.next().and_then(|v| v.parse().ok()).unwrap_or(90),
+            _ => scene = Some(arg),
+        }
+    }
+    let scene = scene.unwrap_or_else(|| "projects/demo/main.scene.json".to_string());
     let path = PathBuf::from(&scene);
     let root = path
         .parent()
@@ -160,6 +210,7 @@ fn main() -> eframe::Result {
                 anim: Default::default(),
                 tiles: TileSetCache::default(),
                 root,
+                shot: shot_out.map(|out| Shot { out, frames_left: shot_frames, requested: false }),
             }))
         }),
     )
