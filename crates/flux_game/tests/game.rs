@@ -225,6 +225,169 @@ fn pipe_visuals_follow_connectivity() {
     assert_eq!(anim(lone), "m4", "pipe connects to the boiler port to its south");
 }
 
+fn tank_volume(w: &flux_core::World, b: flux_core::InstanceId, slot: &str) -> f32 {
+    w.component::<flux_game::fluids::Tank>(b)
+        .and_then(|t| t.slot(slot))
+        .map(|s| s.volume)
+        .unwrap_or(0.0)
+}
+
+#[test]
+fn liquid_flows_through_pipes_and_is_conserved() {
+    let root = setup();
+    let mut session = session_world(root);
+    let (map, well, intake, pipes) = {
+        let world = session.world();
+        let mut w = world.borrow_mut();
+        let map = w.find_first_child(w.workspace(), "Map").unwrap();
+        let cat = flux_game::building::BuildingCatalog::parse(
+            &std::fs::read_to_string(root.join("test.buildings.json")).unwrap(),
+        )
+        .unwrap();
+        // well(2,2) -e-> pipes (3..5,2) -> intake(6,2) with a west input.
+        let well = flux_game::building::place(&mut w, map, cat.get("well").unwrap(), 2, 2, 0).unwrap();
+        let p: Vec<_> = (3..=5)
+            .map(|x| flux_game::building::place(&mut w, map, cat.get("pipe").unwrap(), x, 2, 0).unwrap())
+            .collect();
+        let intake = flux_game::building::place(&mut w, map, cat.get("intake").unwrap(), 6, 2, 0).unwrap();
+        if let Some(t) = w.component_mut::<flux_game::fluids::Tank>(well) {
+            t.slot_mut("out").unwrap().fill("water", 100.0);
+        }
+        (map, well, intake, p)
+    };
+    for _ in 0..40 {
+        session.step(0.1, &InputFrame::default());
+    }
+    let world = session.world();
+    let w = world.borrow();
+    let received = tank_volume(&w, intake, "in");
+    assert!(received > 20.0, "water should reach the intake: {received}");
+    // Conservation: everything that left the well is in pipes or the intake.
+    let mut total = tank_volume(&w, well, "out") + received;
+    for &p in &pipes {
+        total += tank_volume(&w, p, "pipe");
+    }
+    assert!((total - 100.0).abs() < 0.01, "volume must be conserved: {total}");
+    let fluid = w
+        .component::<flux_game::fluids::Tank>(intake)
+        .and_then(|t| t.slot("in"))
+        .map(|s| s.fluid.clone())
+        .unwrap();
+    assert_eq!(fluid, "water");
+    let _ = map;
+}
+
+#[test]
+fn severed_pipe_network_stops_flow() {
+    let root = setup();
+    let mut session = session_world(root);
+    let (map, well, intake) = {
+        let world = session.world();
+        let mut w = world.borrow_mut();
+        let map = w.find_first_child(w.workspace(), "Map").unwrap();
+        let cat = flux_game::building::BuildingCatalog::parse(
+            &std::fs::read_to_string(root.join("test.buildings.json")).unwrap(),
+        )
+        .unwrap();
+        let well = flux_game::building::place(&mut w, map, cat.get("well").unwrap(), 2, 2, 0).unwrap();
+        for x in 3..=5 {
+            flux_game::building::place(&mut w, map, cat.get("pipe").unwrap(), x, 2, 0).unwrap();
+        }
+        let intake = flux_game::building::place(&mut w, map, cat.get("intake").unwrap(), 6, 2, 0).unwrap();
+        if let Some(t) = w.component_mut::<flux_game::fluids::Tank>(well) {
+            t.slot_mut("out").unwrap().fill("water", 200.0);
+        }
+        (map, well, intake)
+    };
+    for _ in 0..10 {
+        session.step(0.1, &InputFrame::default());
+    }
+    // Sever the line, let the cut-off remnant drain into the intake...
+    {
+        let world = session.world();
+        let mut w = world.borrow_mut();
+        assert!(flux_game::building::remove_at(&mut w, map, 4, 2));
+    }
+    for _ in 0..20 {
+        session.step(0.1, &InputFrame::default());
+    }
+    let after_drain = {
+        let world = session.world();
+        let w = world.borrow();
+        (tank_volume(&w, intake, "in"), tank_volume(&w, well, "out"))
+    };
+    // ...then nothing more crosses the gap, in either direction.
+    for _ in 0..20 {
+        session.step(0.1, &InputFrame::default());
+    }
+    let world = session.world();
+    let w = world.borrow();
+    assert_eq!(tank_volume(&w, intake, "in"), after_drain.0, "no flow across a severed network");
+    assert_eq!(tank_volume(&w, well, "out"), after_drain.1, "source stops once its side is full");
+}
+
+#[test]
+fn input_only_ports_never_emit() {
+    let root = setup();
+    let mut session = session_world(root);
+    let (pipe, intake) = {
+        let world = session.world();
+        let mut w = world.borrow_mut();
+        let map = w.find_first_child(w.workspace(), "Map").unwrap();
+        let cat = flux_game::building::BuildingCatalog::parse(
+            &std::fs::read_to_string(root.join("test.buildings.json")).unwrap(),
+        )
+        .unwrap();
+        // The intake's only port is an INPUT facing west — a full tank must
+        // never leak back out into the pipe.
+        let pipe = flux_game::building::place(&mut w, map, cat.get("pipe").unwrap(), 1, 2, 0).unwrap();
+        let intake = flux_game::building::place(&mut w, map, cat.get("intake").unwrap(), 2, 2, 0).unwrap();
+        if let Some(t) = w.component_mut::<flux_game::fluids::Tank>(intake) {
+            t.slot_mut("in").unwrap().fill("water", 150.0);
+        }
+        (pipe, intake)
+    };
+    for _ in 0..30 {
+        session.step(0.1, &InputFrame::default());
+    }
+    let world = session.world();
+    let w = world.borrow();
+    assert_eq!(tank_volume(&w, pipe, "pipe"), 0.0, "input-only port emitted fluid");
+    assert_eq!(tank_volume(&w, intake, "in"), 150.0);
+}
+
+#[test]
+fn tanks_round_trip_through_save() {
+    let root = setup();
+    let mut w = World::new();
+    let map = w.create("Tilemap", w.workspace()).unwrap();
+    w.set_prop(map, "MapWidth", Value::Number(16.0)).unwrap();
+    w.set_prop(map, "MapHeight", Value::Number(16.0)).unwrap();
+    let cat = flux_game::building::BuildingCatalog::parse(
+        &std::fs::read_to_string(root.join("test.buildings.json")).unwrap(),
+    )
+    .unwrap();
+    let boiler = flux_game::building::place(&mut w, map, cat.get("boiler").unwrap(), 2, 2, 0).unwrap();
+    if let Some(t) = w.component_mut::<flux_game::fluids::Tank>(boiler) {
+        t.slot_mut("water").unwrap().fill("water", 42.5);
+    }
+
+    let saved = w.to_save_string();
+    let reloaded = World::from_json(&saved).unwrap();
+    let boiler2 = reloaded
+        .descendants(reloaded.workspace())
+        .into_iter()
+        .find(|&id| {
+            reloaded.class_name(id) == Some("Building")
+                && matches!(reloaded.get_prop(id, "Type"), Some(Value::String(s)) if s == "boiler")
+        })
+        .expect("boiler restored");
+    let tank = reloaded.component::<flux_game::fluids::Tank>(boiler2).expect("tank restored");
+    let slot = tank.slot("water").unwrap();
+    assert_eq!(slot.fluid, "water");
+    assert!((slot.volume - 42.5).abs() < 1e-4);
+}
+
 #[test]
 fn map_held_inventory_round_trips_through_save() {
     // The shop/inventory game stores the player's building stock in an Inventory

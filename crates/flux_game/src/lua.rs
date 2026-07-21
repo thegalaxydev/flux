@@ -254,6 +254,25 @@ pub(crate) fn install() {
         list.into_lua_multi(lua)
     });
 
+    // A building's fluid tanks: list of {id, fluid, volume, capacity}.
+    api::register_method("GetTank", |lua, id, args| {
+        <()>::from_lua_multi(args, lua)?;
+        let rc = api::world(lua);
+        let w = rc.borrow();
+        let list = lua.create_table()?;
+        if let Some(tank) = w.component::<crate::fluids::Tank>(id) {
+            for s in &tank.slots {
+                let entry = lua.create_table()?;
+                entry.set("id", s.id.clone())?;
+                entry.set("fluid", s.fluid.clone())?;
+                entry.set("volume", s.volume)?;
+                entry.set("capacity", s.capacity)?;
+                list.push(entry)?;
+            }
+        }
+        list.into_lua_multi(lua)
+    });
+
     api::register_method("GetInventory", |lua, id, args| {
         <()>::from_lua_multi(args, lua)?;
         let rc = api::world(lua);

@@ -79,6 +79,9 @@ pub struct BuildingDoc {
     /// keep legacy open-sided transport and report it in their status.
     #[serde(default)]
     pub ports: Vec<crate::ports::PortDoc>,
+    /// Fluid tanks (see [`crate::fluids`]): id + capacity + accepted fluids.
+    #[serde(default)]
+    pub tanks: Vec<crate::fluids::TankDoc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reactor: Option<ReactorDoc>,
 }
@@ -167,6 +170,7 @@ pub struct BuildingDef {
     pub cost: f32,
     pub sprite: Option<SpriteArt>,
     pub ports: Vec<crate::ports::Port>,
+    pub tanks: Vec<crate::fluids::TankDoc>,
     pub reactor: Option<ReactorParams>,
 }
 
@@ -252,6 +256,7 @@ impl BuildingCatalog {
                         pivot: b.sprite_pivot.map(|p| Vec2::new(p[0], p[1])).unwrap_or(Vec2::new(0.5, 0.5)),
                     }),
                     ports: b.ports.iter().filter_map(crate::ports::Port::from_doc).collect(),
+                    tanks: b.tanks.clone(),
                     reactor: b.reactor.as_ref().map(|r| ReactorParams {
                         power: r.power.max(0.0),
                         heat: r.heat.max(0.0),
@@ -463,6 +468,31 @@ pub fn place(
     world.set_component::<Inventory>(id, Inventory::new(def.capacity));
     if !def.ports.is_empty() {
         crate::ports::bake(world, id, def);
+    }
+    // Fluid storage: authored tanks, plus an implicit small tank for pipes so
+    // fluid in a line persists through saves.
+    if !def.tanks.is_empty() || def.pipe {
+        let mut slots: Vec<crate::fluids::TankSlot> = def
+            .tanks
+            .iter()
+            .map(|t| crate::fluids::TankSlot {
+                id: t.id.clone(),
+                fluid: String::new(),
+                volume: 0.0,
+                capacity: t.capacity.max(1.0),
+                accepts: t.accepts.clone(),
+            })
+            .collect();
+        if def.pipe && slots.is_empty() {
+            slots.push(crate::fluids::TankSlot {
+                id: "pipe".into(),
+                fluid: String::new(),
+                volume: 0.0,
+                capacity: crate::fluids::PIPE_CAPACITY,
+                accepts: Vec::new(),
+            });
+        }
+        world.set_component::<crate::fluids::Tank>(id, crate::fluids::Tank { slots });
     }
     if def.sprite.is_some() {
         let sprite = attach_sprite(world, tilemap, id, def, col, row, dir);

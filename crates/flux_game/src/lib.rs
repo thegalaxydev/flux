@@ -8,6 +8,7 @@
 
 pub mod building;
 pub mod factory;
+pub mod fluids;
 pub mod pipes;
 pub mod ports;
 pub mod reactor;
@@ -30,17 +31,20 @@ pub fn install() {
     INIT.call_once(|| {
         install_classes();
 
-        // Inventories are a plugin component; register their save (de)serializer.
+        // Inventories and tanks are plugin components; register their save
+        // (de)serializers.
         flux_core::save::register_component(
             "inventory",
             factory::save_inventory,
             factory::load_inventory,
         );
+        flux_core::save::register_component("tank", fluids::save_tank, fluids::load_tank);
 
         // Per-session simulation systems.
         flux_runtime::register_system(|| Box::new(factory::FactorySystem::default()));
         flux_runtime::register_system(|| Box::new(reactor::ReactorSystem::default()));
         flux_runtime::register_system(|| Box::new(pipes::PipeSystem::default()));
+        flux_runtime::register_system(|| Box::new(fluids::FluidSystem::default()));
 
         // Lua API + overlay rendering.
         lua::install();
@@ -49,8 +53,10 @@ pub fn install() {
         // Asset types + drop-to-create targets.
         flux_render::register_asset_kind(".buildings.json", "buildings");
         flux_render::register_asset_kind(".recipes.json", "recipes");
+        flux_render::register_asset_kind(".fluids.json", "fluids");
         flux_render::register_drop("buildings", "Tilemap", "Buildings");
         flux_render::register_drop("recipes", "Tilemap", "Recipes");
+        flux_render::register_drop("fluids", "Tilemap", "Fluids");
     });
 }
 
@@ -93,6 +99,7 @@ fn install_classes() {
         vec![
             asset_prop("Buildings", AssetType::Custom("buildings")),
             asset_prop("Recipes", AssetType::Custom("recipes")),
+            asset_prop("Fluids", AssetType::Custom("fluids")),
             prop_t("_PowerProduced", Value::Number(0.0)),
             prop_t("_PowerConsumed", Value::Number(0.0)),
             // The building the player currently has selected (game UI reads and

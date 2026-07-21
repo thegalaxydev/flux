@@ -10,8 +10,19 @@
         { "id": "plate_out", "kind": "item", "flow": "out", "side": "s", "offset": 0 }
       ] },
     { "id": "boiler",  "name": "Boiler",   "size": [2, 2], "color": [0.4, 0.5, 0.8, 1],
+      "tanks": [ { "id": "water", "capacity": 100, "accepts": ["water"] } ],
       "ports": [
-        { "id": "water_in", "kind": "liquid", "flow": "in", "side": "n", "offset": 0 }
+        { "id": "water_in", "kind": "liquid", "flow": "in", "side": "n", "offset": 0, "tank": "water", "throughput": 30 }
+      ] },
+    { "id": "well",    "name": "Well",     "size": [1, 1], "color": [0.3, 0.6, 0.9, 1],
+      "tanks": [ { "id": "out", "capacity": 200 } ],
+      "ports": [
+        { "id": "water_out", "kind": "liquid", "flow": "out", "side": "e", "offset": 0, "tank": "out", "throughput": 30 }
+      ] },
+    { "id": "intake",  "name": "Intake",   "size": [1, 1], "color": [0.3, 0.4, 0.5, 1],
+      "tanks": [ { "id": "in", "capacity": 200 } ],
+      "ports": [
+        { "id": "fill_in", "kind": "liquid", "flow": "in", "side": "w", "offset": 0, "tank": "in", "throughput": 30 }
       ] },
     { "id": "pipe",    "name": "Pipe",     "size": [1, 1], "color": [0.45, 0.5, 0.57, 1],
       "pipe": true, "capacity": 0,
