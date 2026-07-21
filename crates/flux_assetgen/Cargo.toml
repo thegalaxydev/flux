@@ -1,0 +1,12 @@
+[package]
+name = "flux_assetgen"
+version = "0.1.0"
+edition = "2024"
+description = "Procedural sprite/atlas generator for Flux game art"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+flux_core = { workspace = true }
