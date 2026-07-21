@@ -71,6 +71,10 @@ pub struct BuildingDoc {
     /// Normalized pivot: where the footprint's ground centre sits in the frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sprite_pivot: Option<[f32; 2]>,
+    /// Typed connection ports (see [`crate::ports`]). Machines without ports
+    /// keep legacy open-sided transport and report it in their status.
+    #[serde(default)]
+    pub ports: Vec<crate::ports::PortDoc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reactor: Option<ReactorDoc>,
 }
@@ -157,6 +161,7 @@ pub struct BuildingDef {
     pub directional: bool,
     pub cost: f32,
     pub sprite: Option<SpriteArt>,
+    pub ports: Vec<crate::ports::Port>,
     pub reactor: Option<ReactorParams>,
 }
 
@@ -229,6 +234,7 @@ impl BuildingCatalog {
                         size: b.sprite_size.map(|s| Vec2::new(s[0], s[1])).unwrap_or(Vec2::new(64.0, 64.0)),
                         pivot: b.sprite_pivot.map(|p| Vec2::new(p[0], p[1])).unwrap_or(Vec2::new(0.5, 0.5)),
                     }),
+                    ports: b.ports.iter().filter_map(crate::ports::Port::from_doc).collect(),
                     reactor: b.reactor.as_ref().map(|r| ReactorParams {
                         power: r.power.max(0.0),
                         heat: r.heat.max(0.0),
@@ -394,6 +400,9 @@ pub fn place(
         let _ = world.set_prop(id, "Direction", Value::Number((dir % 4) as f64));
     }
     world.set_component::<Inventory>(id, Inventory::new(def.capacity));
+    if !def.ports.is_empty() {
+        crate::ports::bake(world, id, def);
+    }
     if def.sprite.is_some() {
         let sprite = attach_sprite(world, tilemap, id, def, col, row, dir);
         debug_assert!(sprite.is_some());
@@ -469,6 +478,10 @@ fn attach_sprite(
     Some(sprite)
 }
 
+/// Ports of the building currently being previewed by the ghost (transient
+/// component on the tilemap; the overlay draws them during placement).
+pub struct GhostPorts(pub Vec<crate::ports::ResolvedPort>);
+
 /// Show, move or clear the placement ghost: a translucent preview sprite that
 /// follows the cursor, tinted by placement validity. `None` clears it.
 pub fn set_ghost(world: &mut World, tilemap: InstanceId, ghost: Option<(&BuildingDef, i32, i32, u8)>) {
@@ -481,8 +494,10 @@ pub fn set_ghost(world: &mut World, tilemap: InstanceId, ghost: Option<(&Buildin
         if let Some(g) = existing {
             let _ = world.destroy(g);
         }
+        world.remove_component::<GhostPorts>(tilemap);
         return;
     };
+    world.set_component::<GhostPorts>(tilemap, GhostPorts(crate::ports::resolve(def, col, row, dir)));
     if def.sprite.is_none() {
         return;
     }

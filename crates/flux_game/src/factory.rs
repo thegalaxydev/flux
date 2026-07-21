@@ -316,6 +316,15 @@ pub fn step(
         }
 
         for &b in &ids {
+            // Ports are derived data: loaded worlds arrive without the baked
+            // component, so (re)bake lazily from the catalog.
+            if world.component::<crate::ports::BakedPorts>(b).is_none() {
+                if let Some(def) = bcat.get(&text(world, b, "Type")) {
+                    if !def.ports.is_empty() {
+                        crate::ports::bake(world, b, def);
+                    }
+                }
+            }
             let mined = mine(world, tm, b, &bcat, tileset.as_deref(), dt);
             let produced = produce(world, b, &rcat, dt);
             resolve_state(world, b, &bcat, mined, produced, dt);

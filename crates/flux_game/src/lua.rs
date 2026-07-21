@@ -211,6 +211,28 @@ pub(crate) fn install() {
             .into_lua_multi(lua)
     });
 
+    // A building's resolved connection ports, for HUDs and editors.
+    api::register_method("GetPorts", |lua, id, args| {
+        <()>::from_lua_multi(args, lua)?;
+        let rc = api::world(lua);
+        let w = rc.borrow();
+        let list = lua.create_table()?;
+        if let Some(baked) = crate::ports::of(&w, id) {
+            for rp in &baked.0 {
+                let entry = lua.create_table()?;
+                entry.set("id", rp.port.id.clone())?;
+                entry.set("kind", rp.port.kind.name())?;
+                entry.set("flow", rp.port.flow.name())?;
+                entry.set("cell", api::LuaVec2(glam::Vec2::new(rp.cell.0 as f32, rp.cell.1 as f32)))?;
+                entry.set("facing", api::LuaVec2(glam::Vec2::new(rp.facing.0 as f32, rp.facing.1 as f32)))?;
+                entry.set("accepts", rp.port.accepts.join(","))?;
+                entry.set("limit", rp.port.limit)?;
+                list.push(entry)?;
+            }
+        }
+        list.into_lua_multi(lua)
+    });
+
     api::register_method("GetInventory", |lua, id, args| {
         <()>::from_lua_multi(args, lua)?;
         let rc = api::world(lua);

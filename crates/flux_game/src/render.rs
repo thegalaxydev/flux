@@ -27,6 +27,53 @@ fn screen_aabb(pts: &[Pos2]) -> egui::Rect {
     r
 }
 
+/// Port marker colour by kind: item amber, liquid blue, gas white, power
+/// yellow, heat red.
+fn port_color(kind: crate::ports::PortKind) -> Color32 {
+    use crate::ports::PortKind::*;
+    match kind {
+        Item => Color32::from_rgb(255, 190, 70),
+        Liquid => Color32::from_rgb(90, 160, 255),
+        Gas => Color32::from_rgb(235, 240, 245),
+        Power => Color32::from_rgb(255, 230, 60),
+        Heat => Color32::from_rgb(255, 90, 60),
+    }
+}
+
+/// Draw a building's port markers: a dot on the boundary edge, an arrow
+/// pointing out for outputs / in for inputs, coloured by kind.
+fn draw_ports(
+    painter: &Painter,
+    ctx: &RenderCtx,
+    map_pos: glam::Vec2,
+    tw: f32,
+    th: f32,
+    ports: &[crate::ports::ResolvedPort],
+) {
+    for rp in ports {
+        let cell_c = flux_core::tilemap::tile_to_world(rp.cell.0, rp.cell.1, tw, th);
+        let face_c = flux_core::tilemap::tile_to_world(rp.facing.0, rp.facing.1, tw, th);
+        // Midpoint of the shared edge, nudged outward.
+        let edge = (cell_c + face_c) * 0.5;
+        let out = (face_c - cell_c) * 0.5;
+        let color = port_color(rp.port.kind);
+        let p0 = ctx.to_screen(map_pos + edge - out * 0.4);
+        let p1 = ctx.to_screen(map_pos + edge + out * 0.4);
+        let (tail, head) = if rp.port.flow.gives_output() { (p0, p1) } else { (p1, p0) };
+        painter.line_segment([tail, head], Stroke::new(2.5, color));
+        // Arrowhead.
+        let dir = (head - tail).normalized();
+        let n = egui::vec2(-dir.y, dir.x);
+        let sz = (5.0 * ctx.camera.zoom).clamp(3.0, 8.0);
+        painter.add(Shape::convex_polygon(
+            vec![head, head - dir * sz + n * sz * 0.6, head - dir * sz - n * sz * 0.6],
+            color,
+            Stroke::NONE,
+        ));
+        painter.circle_filled(ctx.to_screen(map_pos + edge), (3.0 * ctx.camera.zoom).clamp(2.0, 5.0), color);
+    }
+}
+
 /// Stable per-item pip colour, so ore streams are recognizable at a glance.
 fn item_color(item: &str) -> Color32 {
     match item {
@@ -108,6 +155,9 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
                     quad.clone(),
                     Stroke::new(2.0, Color32::from_rgb(255, 210, 80)),
                 ));
+                if let Some(baked) = crate::ports::of(world, bid) {
+                    draw_ports(painter, ctx, pos, tw, th, &baked.0);
+                }
             }
             if crate::building::sprite_of(world, bid).is_some() {
                 // The engine draws the sprite; nothing else to add. (No
@@ -126,6 +176,12 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
                 };
                 painter.add(Shape::convex_polygon(quad, to_color(&color), Stroke::new(1.5, to_color(&outline))));
             }
+        }
+
+        // Placement preview: the ghost's ports, so you can line up conveyors
+        // and pipes before committing.
+        if let Some(gp) = world.component::<crate::building::GhostPorts>(tm) {
+            draw_ports(painter, ctx, pos, tw, th, &gp.0);
         }
 
         // Item-flow pips: each recent hop animates from source to destination.

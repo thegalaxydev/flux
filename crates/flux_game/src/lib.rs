@@ -8,6 +8,7 @@
 
 pub mod building;
 pub mod factory;
+pub mod ports;
 pub mod reactor;
 mod lua;
 mod render;
