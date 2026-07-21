@@ -4,7 +4,19 @@
       "directional": true, "rate": 10, "capacity": 5 },
     { "id": "smelter", "name": "Smelter",  "size": [2, 2], "color": [0.8, 0.3, 0.2, 1],
       "category": "production", "recipe": "plate", "rate": 5,
-      "sprite": "art/smelter.frames.json", "sprite_size": [128, 128], "sprite_pivot": [0.5, 0.7] },
+      "sprite": "art/smelter.frames.json", "sprite_size": [128, 128], "sprite_pivot": [0.5, 0.7],
+      "ports": [
+        { "id": "ore_in",    "kind": "item", "flow": "in",  "side": "n", "offset": 0 },
+        { "id": "plate_out", "kind": "item", "flow": "out", "side": "s", "offset": 0 }
+      ] },
+    { "id": "boiler",  "name": "Boiler",   "size": [2, 2], "color": [0.4, 0.5, 0.8, 1],
+      "ports": [
+        { "id": "water_in", "kind": "liquid", "flow": "in", "side": "n", "offset": 0 }
+      ] },
+    { "id": "hopper",  "name": "Hopper",   "size": [1, 1], "color": [0.7, 0.7, 0.4, 1],
+      "ports": [
+        { "id": "item_in", "kind": "item", "flow": "in", "side": "n", "offset": 0, "limit": 1 }
+      ] },
     { "id": "miner",   "name": "Miner",    "size": [2, 2], "color": [0.85, 0.6, 0.2, 1],
       "mines": true, "rate": 20 },
     { "id": "storage", "name": "Storage",  "size": [1, 1], "color": [0.6, 0.45, 0.3, 1],

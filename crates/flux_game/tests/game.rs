@@ -116,6 +116,73 @@ fn factory_mines_produces_and_transports_a_chain() {
     assert!(plates > 0, "no plates reached storage");
 }
 
+/// Session-driven world for direct (non-Lua) transport tests.
+fn session_world(root: &Path) -> Session {
+    Session::from_scene_json(&scene("scripts/noop.luau", true), root).unwrap()
+}
+
+#[test]
+fn conveyor_respects_ports() {
+    let root = setup();
+    let mut session = session_world(root);
+    {
+        let world = session.world();
+        let mut w = world.borrow_mut();
+        let map = w.find_first_child(w.workspace(), "Map").unwrap();
+        let cat = flux_game::building::BuildingCatalog::parse(
+            &std::fs::read_to_string(root.join("test.buildings.json")).unwrap(),
+        )
+        .unwrap();
+
+        // Boiler's only port is a LIQUID input on its north cell (4,4): a belt
+        // pointing there must never deliver items.
+        flux_game::building::place(&mut w, map, cat.get("boiler").unwrap(), 4, 4, 0).unwrap();
+        let feed = flux_game::building::place(&mut w, map, cat.get("belt").unwrap(), 4, 3, 1).unwrap();
+        if let Some(inv) = w.component_mut::<Inventory>(feed) {
+            inv.add("coal", 3);
+        }
+
+        // Hopper's single item input has limit 1: with two belts pointing at
+        // it, only the first (deterministic by cell order) may deliver.
+        let hopper = flux_game::building::place(&mut w, map, cat.get("hopper").unwrap(), 9, 9, 0).unwrap();
+        let north = flux_game::building::place(&mut w, map, cat.get("belt").unwrap(), 9, 8, 1).unwrap();
+        let west = flux_game::building::place(&mut w, map, cat.get("belt").unwrap(), 8, 9, 0).unwrap();
+        if let Some(inv) = w.component_mut::<Inventory>(north) {
+            inv.add("from_north", 2);
+        }
+        if let Some(inv) = w.component_mut::<Inventory>(west) {
+            inv.add("from_west", 2);
+        }
+        let _ = (hopper, north, west);
+    }
+    for _ in 0..40 {
+        session.step(0.1, &InputFrame::default());
+    }
+    let world = session.world();
+    let w = world.borrow();
+    let map = w.find_first_child(w.workspace(), "Map").unwrap();
+    let by_type = |ty: &str| {
+        w.descendants(map)
+            .into_iter()
+            .find(|&id| {
+                w.class_name(id) == Some("Building")
+                    && matches!(w.get_prop(id, "Type"), Some(Value::String(s)) if s == ty)
+            })
+            .unwrap()
+    };
+    // Liquid port rejected the conveyor entirely.
+    let boiler = by_type("boiler");
+    assert!(
+        w.component::<Inventory>(boiler).is_none_or(|i| i.total() == 0),
+        "items crossed a liquid port"
+    );
+    // Limit 1: exactly one belt's cargo arrived — the lower-cell one (west).
+    let hopper = by_type("hopper");
+    let inv = w.component::<Inventory>(hopper).unwrap();
+    assert_eq!(inv.count("from_west"), 2, "first feeder should deliver");
+    assert_eq!(inv.count("from_north"), 0, "second feeder must be blocked by limit");
+}
+
 #[test]
 fn map_held_inventory_round_trips_through_save() {
     // The shop/inventory game stores the player's building stock in an Inventory

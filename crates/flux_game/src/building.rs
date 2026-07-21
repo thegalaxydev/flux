@@ -175,6 +175,17 @@ pub fn dir_offset(dir: u8) -> (i32, i32) {
     }
 }
 
+/// The cells a `w x h` footprint at `(col, row)` points at along `dir` — a
+/// directional building's whole front edge.
+pub fn front_cells_of(col: i32, row: i32, w: i32, h: i32, dir: u8) -> Vec<(i32, i32)> {
+    match dir % 4 {
+        0 => (0..h).map(|i| (col + w, row + i)).collect(),
+        1 => (0..w).map(|i| (col + i, row + h)).collect(),
+        2 => (0..h).map(|i| (col - 1, row + i)).collect(),
+        _ => (0..w).map(|i| (col + i, row - 1)).collect(),
+    }
+}
+
 /// Animated-sprite art for a building type.
 #[derive(Clone)]
 pub struct SpriteArt {
@@ -359,6 +370,50 @@ fn buildings_of(world: &World, tilemap: InstanceId) -> impl Iterator<Item = Inst
 /// The building whose footprint covers `(col, row)`, if any.
 pub fn building_at(world: &World, tilemap: InstanceId, col: i32, row: i32) -> Option<InstanceId> {
     buildings_of(world, tilemap).find(|&b| footprint_of(world, b).is_some_and(|f| f.contains(col, row)))
+}
+
+/// Placement verdict with a human reason: hard failures block placement;
+/// soft warnings (empty `ok=true` reason means all clear) explain why a
+/// just-placed conveyor wouldn't connect.
+pub fn placement(
+    world: &World,
+    tilemap: InstanceId,
+    def: &BuildingDef,
+    col: i32,
+    row: i32,
+    dir: u8,
+) -> (bool, String) {
+    let (mw, mh) = map_dims(world, tilemap);
+    let (w, h) = (def.width as i32, def.height as i32);
+    if col < 0 || row < 0 || col + w > mw || row + h > mh {
+        return (false, "out of bounds".into());
+    }
+    let want = Footprint { col, row, w, h };
+    if buildings_of(world, tilemap).any(|b| footprint_of(world, b).is_some_and(|f| f.overlaps(&want))) {
+        return (false, "overlaps a building".into());
+    }
+    // Soft conveyor feedback: placing a belt whose front cell lands on a
+    // ports-declaring machine that has no item input there.
+    if def.directional {
+        for fc in front_cells_of(col, row, w, h, dir) {
+            let Some(target) = building_at(world, tilemap, fc.0, fc.1) else { continue };
+            let Some(baked) = crate::ports::of(world, target) else { continue };
+            let has_item_in = baked.0.iter().any(|rp| {
+                rp.cell == fc
+                    && rp.port.kind == crate::ports::PortKind::Item
+                    && rp.port.flow.takes_input()
+            });
+            if !has_item_in {
+                let why = if baked.0.iter().any(|rp| rp.cell == fc && rp.port.kind.is_fluid()) {
+                    "won't connect: that side is a liquid port"
+                } else {
+                    "won't connect: no item input on that side"
+                };
+                return (true, why.into());
+            }
+        }
+    }
+    (true, String::new())
 }
 
 /// Whether a `def`-sized building fits at `(col, row)`.

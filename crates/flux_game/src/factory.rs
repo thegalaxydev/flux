@@ -495,12 +495,7 @@ fn front_cells(world: &World, b: InstanceId) -> Vec<(i32, i32)> {
     let (c, r) = cell(world, b);
     let (w, h) = footprint(world, b);
     let dir = num(world, b, "Direction") as u8;
-    match dir % 4 {
-        0 => (0..h).map(|i| (c + w, r + i)).collect(),
-        1 => (0..w).map(|i| (c + i, r + h)).collect(),
-        2 => (0..h).map(|i| (c - 1, r + i)).collect(),
-        _ => (0..w).map(|i| (c + i, r - 1)).collect(),
-    }
+    crate::building::front_cells_of(c, r, w, h, dir)
 }
 
 /// Absolute world-space centre of a building's footprint on its tilemap.
@@ -545,6 +540,52 @@ fn transport(
         }
     }
 
+    // Connection limits: rank the belts feeding each limited port cell so a
+    // single-connection port only ever accepts from its first (deterministic)
+    // feeder. Keyed by (machine, port cell); feeders sorted by belt cell.
+    let mut feeders: HashMap<(InstanceId, (i32, i32)), Vec<InstanceId>> = HashMap::new();
+    for &b in ids {
+        let Some(def) = cat.get(&text(world, b, "Type")) else {
+            continue;
+        };
+        if !def.directional {
+            continue;
+        }
+        for fc in front_cells(world, b) {
+            if let Some(&t) = occupancy.get(&fc) {
+                if t != b && crate::ports::of(world, t).is_some() {
+                    feeders.entry((t, fc)).or_default().push(b);
+                }
+            }
+        }
+    }
+    for list in feeders.values_mut() {
+        list.sort_by_key(|&b| cell(world, b));
+    }
+    // Whether `belt` may deliver `item` into machine `t` at `fc` — port rules:
+    // an item INPUT port on that cell, resource accepted, connection slot free.
+    // Machines without ports keep legacy open-sided behaviour (`None`).
+    let port_gate = |world: &World, t: InstanceId, fc: (i32, i32), belt: InstanceId, item: &str| -> Option<bool> {
+        let baked = crate::ports::of(world, t)?;
+        let Some(rp) = baked.0.iter().find(|rp| {
+            rp.cell == fc && rp.port.kind == crate::ports::PortKind::Item && rp.port.flow.takes_input()
+        }) else {
+            return Some(false); // has ports, but no item input on that cell
+        };
+        if !rp.port.accepts_resource(item) {
+            return Some(false);
+        }
+        if rp.port.limit > 0 {
+            if let Some(list) = feeders.get(&(t, fc)) {
+                let rank = list.iter().position(|&x| x == belt).unwrap_or(usize::MAX);
+                if rank >= rp.port.limit as usize {
+                    return Some(false);
+                }
+            }
+        }
+        Some(true)
+    };
+
     let mut moves: Vec<(InstanceId, InstanceId, String, u32)> = Vec::new();
     for &b in ids {
         let Some(def) = cat.get(&text(world, b, "Type")) else {
@@ -578,21 +619,31 @@ fn transport(
         }
         let (c, r) = cell(world, b);
         let (w, h) = footprint(world, b);
-        let targets: Vec<InstanceId> = if def.directional {
+        // Targets carry the cell they're reached through, so port rules can
+        // check the exact boundary cell (None = belt-to-belt / legacy path).
+        let targets: Vec<(InstanceId, Option<(i32, i32)>)> = if def.directional {
             // A belt feeds exactly the building its front edge points at.
             let mut out = Vec::new();
-            for cell in front_cells(world, b) {
-                if let Some(&t) = occupancy.get(&cell) {
-                    if t != b && !out.contains(&t) {
-                        out.push(t);
+            for fc in front_cells(world, b) {
+                if let Some(&t) = occupancy.get(&fc) {
+                    if t != b && !out.iter().any(|(o, _)| *o == t) {
+                        out.push((t, Some(fc)));
                     }
                 }
             }
             out
         } else {
-            // Producers dump onto adjacent conveyors — but never onto one that
-            // points back INTO them (their own feeder), or the feeder becomes
-            // an output trap it can never empty.
+            // Producers dump onto adjacent conveyors — restricted to their
+            // item OUTPUT ports when they declare ports, and never onto a
+            // conveyor that points back INTO them (an inescapable trap).
+            let out_cells: Option<Vec<(i32, i32)>> = crate::ports::of(world, b).map(|baked| {
+                baked
+                    .0
+                    .iter()
+                    .filter(|rp| rp.port.kind == crate::ports::PortKind::Item && rp.port.flow.gives_output())
+                    .map(|rp| rp.facing)
+                    .collect()
+            });
             edge_neighbours(&occupancy, b, c, r, w, h)
                 .into_iter()
                 .filter(|&nb| {
@@ -600,7 +651,20 @@ fn transport(
                         && !front_cells(world, nb)
                             .iter()
                             .any(|cell| occupancy.get(cell) == Some(&b))
+                        && match &out_cells {
+                            // With ports: the belt must sit on an output port's
+                            // facing cell.
+                            Some(cells) => {
+                                let (nc, nr) = cell(world, nb);
+                                let (nw, nh) = footprint(world, nb);
+                                cells.iter().any(|&(cx, cy)| {
+                                    cx >= nc && cx < nc + nw && cy >= nr && cy < nr + nh
+                                })
+                            }
+                            None => true, // legacy: any adjacent belt
+                        }
                 })
+                .map(|nb| (nb, None))
                 .collect()
         };
 
@@ -609,11 +673,17 @@ fn transport(
             if budget == 0 {
                 break;
             }
-            for &nb in &targets {
+            for &(nb, via_cell) in &targets {
                 if budget == 0 {
                     break;
                 }
-                if !accepts(world, nb, &item, cat, recipes) {
+                // Port rules first (belt -> ports machine); legacy accepts()
+                // covers belts, stores and port-less machines.
+                let allowed = match via_cell.and_then(|fc| port_gate(world, nb, fc, b, &item)) {
+                    Some(v) => v,
+                    None => accepts(world, nb, &item, cat, recipes),
+                };
+                if !allowed {
                     continue;
                 }
                 let room = world.component::<Inventory>(nb).map(|i| i.free()).unwrap_or(0);

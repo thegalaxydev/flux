@@ -104,6 +104,27 @@ pub(crate) fn install() {
         ().into_lua_multi(lua)
     });
 
+    // GetPlacement(type, col, row, dir?) -> (ok, reason). Hard failures block
+    // placement; a non-empty reason with ok=true is a connection warning.
+    api::register_method("GetPlacement", |lua, id, args| {
+        let (ty, col, row, dir) = <(String, i32, i32, Option<u8>)>::from_lua_multi(args, lua)?;
+        let cat = {
+            let rc = api::world(lua);
+            let w = rc.borrow();
+            if !is_tilemap(&w, id) {
+                return Err(err("GetPlacement can only be called on a Tilemap"));
+            }
+            catalog_of(lua, &w, id).ok_or_else(|| err("GetPlacement: Tilemap has no Buildings catalog"))?
+        };
+        let def = cat
+            .get(&ty)
+            .ok_or_else(|| err(format!("GetPlacement: unknown building '{ty}'")))?;
+        let rc = api::world(lua);
+        let w = rc.borrow();
+        let (ok, reason) = building::placement(&w, id, def, col, row, dir.unwrap_or(0));
+        (ok, reason).into_lua_multi(lua)
+    });
+
     api::register_method("BuildingTypes", |lua, id, args| {
         <()>::from_lua_multi(args, lua)?;
         let rc = api::world(lua);
