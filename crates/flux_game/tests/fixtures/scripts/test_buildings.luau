@@ -31,8 +31,12 @@ print("ghostfree " .. tostring(map:GetBuildingAt(8, 8) == nil))
 map:SetGhost(nil)
 print("ghostgone " .. tostring(map:FindFirstChild("_Ghost") == nil))
 
--- Selection prop round-trips instances and nil.
-map._Selected = belt
-print("sel " .. tostring(map._Selected == belt))
-map._Selected = nil
-print("selnil " .. tostring(map._Selected == nil))
+-- Selection is a tag on the building (attributes are data-only).
+belt:AddTag("selected")
+print("sel " .. tostring(belt:HasTag("selected")))
+belt:RemoveTag("selected")
+print("selnil " .. tostring(not belt:HasTag("selected")))
+
+-- Game state on the map is attributes, not class props.
+map:SetAttribute("Money", 125)
+print("money " .. tostring(map:GetAttribute("Money")))

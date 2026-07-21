@@ -19,7 +19,7 @@ use std::sync::Once;
 
 use glam::Vec2;
 
-use flux_core::{AssetType, ClassRegistry, Color, Value, asset_prop, prop, prop_t};
+use flux_core::{ClassRegistry, Color, Value, prop, prop_t};
 
 static INIT: Once = Once::new();
 
@@ -97,22 +97,33 @@ fn install_classes() {
             prop("PowerOutput", Value::Number(0.0)),
         ],
     );
-    // Extend the engine's Tilemap with the game's catalog refs + power balance.
-    reg.extend(
-        "Tilemap",
-        vec![
-            asset_prop("Buildings", AssetType::Custom("buildings")),
-            asset_prop("Recipes", AssetType::Custom("recipes")),
-            asset_prop("Fluids", AssetType::Custom("fluids")),
-            prop_t("_PowerProduced", Value::Number(0.0)),
-            prop_t("_PowerConsumed", Value::Number(0.0)),
-            // The building the player currently has selected (game UI reads and
-            // writes this; the overlay draws its highlight).
-            prop_t("_Selected", Value::InstanceRef(None)),
-            // Player's money for this map's economy (persisted in saves). The
-            // engine ignores it; the game reads/writes it and charges for builds.
-            prop("Money", Value::Number(200.0)),
-        ],
-    );
     flux_core::install(reg);
+}
+
+// The game's per-map state lives in ATTRIBUTES on its own tilemap, not in
+// class extensions — the engine `Tilemap` class stays clean for every other
+// game. Names used: `Buildings`/`Recipes`/`Fluids` (catalog asset paths,
+// authored in the scene), `Money` (economy, saved), `PowerProduced`/
+// `PowerConsumed` (live balance). The selected building carries the
+// `selected` TAG rather than a map-level instance reference.
+
+/// Read a string/asset attribute ("" when unset).
+pub(crate) fn attr_text(w: &flux_core::World, id: flux_core::InstanceId, name: &str) -> String {
+    match w.attribute(id, name) {
+        Some(Value::String(s)) | Some(Value::Asset(s)) => s.clone(),
+        _ => String::new(),
+    }
+}
+
+/// Read a numeric attribute (0.0 when unset).
+pub(crate) fn attr_num(w: &flux_core::World, id: flux_core::InstanceId, name: &str) -> f64 {
+    match w.attribute(id, name) {
+        Some(Value::Number(n)) => *n,
+        _ => 0.0,
+    }
+}
+
+/// Write a numeric attribute.
+pub(crate) fn set_attr_num(w: &mut flux_core::World, id: flux_core::InstanceId, name: &str, v: f64) {
+    let _ = w.set_attribute(id, name, Some(Value::Number(v)));
 }

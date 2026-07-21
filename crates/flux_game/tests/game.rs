@@ -35,9 +35,9 @@ fn scene(script_path: &str, with_catalogs: bool) -> String {
     w.set_prop(map, "TileSet", Value::Asset("test.tileset.json".into()))
         .unwrap();
     if with_catalogs {
-        w.set_prop(map, "Buildings", Value::Asset("test.buildings.json".into()))
+        w.set_attribute(map, "Buildings", Some(Value::Asset("test.buildings.json".into())))
             .unwrap();
-        w.set_prop(map, "Recipes", Value::Asset("test.recipes.json".into()))
+        w.set_attribute(map, "Recipes", Some(Value::Asset("test.recipes.json".into())))
             .unwrap();
     }
     let size = if with_catalogs { 16.0 } else { 8.0 };
@@ -83,8 +83,9 @@ fn lua_building_placement_and_camera_conversion() {
     assert!(has("ghost true"), "SetGhost shows: {logs:?}");
     assert!(has("ghostfree true"), "ghost isn't a building: {logs:?}");
     assert!(has("ghostgone true"), "SetGhost(nil) clears: {logs:?}");
-    assert!(has("sel true"), "_Selected accepts an instance: {logs:?}");
-    assert!(has("selnil true"), "_Selected accepts nil: {logs:?}");
+    assert!(has("sel true"), "selected tag applies: {logs:?}");
+    assert!(has("selnil true"), "selected tag removes: {logs:?}");
+    assert!(has("money 125"), "map attributes work: {logs:?}");
 }
 
 #[test]

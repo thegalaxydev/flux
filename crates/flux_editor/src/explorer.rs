@@ -608,9 +608,22 @@ fn drop_asset(state: &mut UiState, target: InstanceId, rel: &str) {
         AssetKind::WorldGen => ("Tilemap", "WorldGen"),
         AssetKind::LuaModule => ("Module", "SourcePath"),
         AssetKind::LuaScript | AssetKind::Script => ("Script", "SourcePath"),
-        // Plugin asset types register their own drop targets.
+        // Plugin asset types register their own drop targets — those land as
+        // ATTRIBUTES (no class declares them), so the engine classes stay clean.
         AssetKind::Custom(name) => match flux_render::drop_target(name) {
-            Some(target) => target,
+            Some((class, attr)) => {
+                state.queue.push(Pending {
+                    cmd: Command::create_with_attrs(
+                        class,
+                        target,
+                        vec![],
+                        vec![(attr.to_string(), Value::Asset(rel.to_string()))],
+                    ),
+                    merge: false,
+                });
+                state.selection = Some(target);
+                return;
+            }
             None => return,
         },
         _ => return,

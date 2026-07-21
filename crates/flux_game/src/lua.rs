@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use mlua::{FromLuaMulti, IntoLuaMulti, Lua};
 
-use flux_core::{InstanceId, Value, World};
+use flux_core::{InstanceId, World};
 use flux_script::api::{self, LuaInstance};
 
 use crate::building::{self, BuildingCatalog, BuildingCatalogCache};
@@ -24,10 +24,10 @@ fn err(msg: impl Into<String>) -> mlua::Error {
 }
 
 fn catalog_of(lua: &Lua, w: &World, id: InstanceId) -> Option<Rc<BuildingCatalog>> {
-    let path = match w.get_prop(id, "Buildings") {
-        Some(Value::Asset(s)) if !s.is_empty() => s.clone(),
-        _ => return None,
-    };
+    let path = crate::attr_text(w, id, "Buildings");
+    if path.is_empty() {
+        return None;
+    }
     let cache = lua.app_data_ref::<BuildingCacheHandle>()?.clone();
     let root = api::asset_root(lua);
     let cat = cache.borrow_mut().get(&path, &root);
@@ -176,11 +176,8 @@ pub(crate) fn install() {
         if !is_tilemap(&w, id) {
             return Err(err("GetPower can only be called on a Tilemap"));
         }
-        let num = |name| match w.get_prop(id, name) {
-            Some(Value::Number(n)) => *n,
-            _ => 0.0,
-        };
-        (num("_PowerProduced"), num("_PowerConsumed")).into_lua_multi(lua)
+        (crate::attr_num(&w, id, "PowerProduced"), crate::attr_num(&w, id, "PowerConsumed"))
+            .into_lua_multi(lua)
     });
 
     // Inventories are a generic per-instance capability (see `World::component`):

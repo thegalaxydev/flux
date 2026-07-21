@@ -280,10 +280,7 @@ pub fn tick(
         .collect();
 
     for tm in maps {
-        let bc_path = match world.get_prop(tm, "Buildings") {
-            Some(Value::Asset(s)) => s.clone(),
-            _ => String::new(),
-        };
+        let bc_path = crate::attr_text(world, tm, "Buildings");
         let Some(cat) = buildings.get(&bc_path, root) else {
             continue;
         };

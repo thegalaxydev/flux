@@ -146,10 +146,9 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
                 continue;
             }
 
-            let selected = matches!(
-                world.get_prop(tm, "_Selected"),
-                Some(Value::InstanceRef(Some(s))) if *s == bid
-            );
+            // Selection travels as a TAG on the building (Roblox-style),
+            // not a map-level instance reference.
+            let selected = world.has_tag(bid, "selected");
             if selected {
                 // Selection highlight: a bright footprint outline (drawn over
                 // the sprite on purpose — it's a UI adornment).

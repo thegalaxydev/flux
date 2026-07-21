@@ -393,6 +393,27 @@ pub fn show(
     if let Some(payload) = response.dnd_release_payload::<AssetDrag>() {
         if let Some(pos) = response.hover_pos() {
             let rel = &payload.0;
+            // Plugin catalog assets dropped onto a matching node set the
+            // registered ATTRIBUTE on it (e.g. a .buildings.json on a Tilemap).
+            let file = rel.rsplit(['/', '\\']).next().unwrap_or(rel);
+            if let flux_render::AssetKind::Custom(kind) = flux_render::classify(file, false) {
+                if let Some((class, attr)) = flux_render::drop_target(kind) {
+                    if let Some(id) = pick(pos).filter(|&id| world.class_name(id) == Some(class)) {
+                        let old = world.attribute(id, attr).cloned();
+                        state.queue.push(Pending {
+                            cmd: crate::command::Command::set_attribute(
+                                id,
+                                attr.to_string(),
+                                old,
+                                Some(Value::Asset(rel.clone())),
+                            ),
+                            merge: false,
+                        });
+                        state.selection = Some(id);
+                        return;
+                    }
+                }
+            }
             // Dropped onto a textured node: re-texture it in place.
             let retexture = pick(pos).filter(|&id| world.get_prop(id, "Texture").is_some());
             if let Some(id) = retexture {
@@ -410,15 +431,25 @@ pub fn show(
                 // a Sprite for a texture, an AnimatedSprite for a clip library.
                 if let Some((class, prop)) = node_for_asset(rel) {
                     let wp = to_world(pos);
+                    // Plugin drop targets are attributes (undeclared on the
+                    // class); engine ones are declared props.
+                    let declared = flux_core::registry()
+                        .find(class)
+                        .map(|c| flux_core::registry().info(c))
+                        .is_some_and(|info| info.props.iter().any(|p| p.name == prop));
+                    let (props, attrs) = if declared {
+                        (
+                            vec![(prop, Value::Asset(rel.clone())), ("Position", Value::Vec2(wp))],
+                            vec![],
+                        )
+                    } else {
+                        (
+                            vec![("Position", Value::Vec2(wp))],
+                            vec![(prop.to_string(), Value::Asset(rel.clone()))],
+                        )
+                    };
                     state.queue.push(Pending {
-                        cmd: Command::create_with(
-                            class,
-                            world.workspace(),
-                            vec![
-                                (prop, Value::Asset(rel.clone())),
-                                ("Position", Value::Vec2(wp)),
-                            ],
-                        ),
+                        cmd: Command::create_with_attrs(class, world.workspace(), props, attrs),
                         merge: false,
                     });
                 }

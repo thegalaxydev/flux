@@ -292,8 +292,8 @@ pub fn step(
 
     for tm in maps {
         let ts_path = asset(world, tm, "TileSet");
-        let bc_path = asset(world, tm, "Buildings");
-        let rc_path = asset(world, tm, "Recipes");
+        let bc_path = crate::attr_text(world, tm, "Buildings");
+        let rc_path = crate::attr_text(world, tm, "Recipes");
         let (Some(bcat), Some(rcat)) = (buildings.get(&bc_path, root), recipes.get(&rc_path, root))
         else {
             continue;

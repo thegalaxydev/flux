@@ -3,8 +3,8 @@
 //! Each reactor `Building` is a small dynamical system over instance props
 //! (`ControlRods`/`Fuel`/`Temperature`/`Integrity`/`PowerOutput`), so its state
 //! is inspectable, scriptable and saved for free. [`ReactorSystem`] advances
-//! every reactor each frame and tallies each tilemap's power balance into
-//! transient `_PowerProduced`/`_PowerConsumed` props (read via `Tilemap:GetPower`).
+//! every reactor each frame and tallies each tilemap's power balance into the
+//! `PowerProduced`/`PowerConsumed` attributes (read via `Tilemap:GetPower`).
 
 use std::path::Path;
 
@@ -59,10 +59,7 @@ pub fn step(world: &mut World, buildings: &mut BuildingCatalogCache, root: &Path
         .collect();
 
     for tm in maps {
-        let bc_path = match world.get_prop(tm, "Buildings") {
-            Some(Value::Asset(s)) => s.clone(),
-            _ => String::new(),
-        };
+        let bc_path = crate::attr_text(world, tm, "Buildings");
         let Some(cat) = buildings.get(&bc_path, root) else {
             continue;
         };
@@ -130,8 +127,8 @@ pub fn step(world: &mut World, buildings: &mut BuildingCatalogCache, root: &Path
             let state = if hot_towers.contains(t) { "working" } else { "idle" };
             crate::factory::apply_state(world, *t, state);
         }
-        set(world, tm, "_PowerProduced", produced);
-        set(world, tm, "_PowerConsumed", consumed);
+        crate::set_attr_num(world, tm, "PowerProduced", produced as f64);
+        crate::set_attr_num(world, tm, "PowerConsumed", consumed as f64);
     }
 }
 
@@ -402,7 +399,7 @@ mod tests {
         let tm = w.create("Tilemap", w.workspace()).unwrap();
         w.set_prop(tm, "MapWidth", Value::Number(16.0)).unwrap();
         w.set_prop(tm, "MapHeight", Value::Number(16.0)).unwrap();
-        w.set_prop(tm, "Buildings", Value::Asset("b.buildings.json".into())).unwrap();
+        w.set_attribute(tm, "Buildings", Some(Value::Asset("b.buildings.json".into()))).unwrap();
         let cat = Rc::new(BuildingCatalog::parse(catalog).unwrap());
         let r = crate::building::place(&mut w, tm, cat.get("reactor").unwrap(), 2, 2, 0).unwrap();
         let t = crate::building::place(&mut w, tm, cat.get("cooling").unwrap(), 4, 2, 0).unwrap();
@@ -431,8 +428,7 @@ mod tests {
         let dir = std::env::temp_dir().join("flux_game_reactor_test");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("b.buildings.json"), CATALOG).unwrap();
-        w.set_prop(tm, "Buildings", Value::Asset("b.buildings.json".into()))
-            .unwrap();
+        w.set_attribute(tm, "Buildings", Some(Value::Asset("b.buildings.json".into()))).unwrap();
         crate::building::place(&mut w, tm, cat.get("lamp").unwrap(), 8, 8, 0).unwrap();
         crate::building::place(&mut w, tm, cat.get("lamp").unwrap(), 10, 10, 0).unwrap();
 
@@ -440,7 +436,7 @@ mod tests {
         for _ in 0..50 {
             step(&mut w, &mut cache, &dir, 0.1);
         }
-        assert!(num(&w, tm, "_PowerProduced") > 0.0);
-        assert_eq!(num(&w, tm, "_PowerConsumed"), 10.0);
+        assert!(crate::attr_num(&w, tm, "PowerProduced") > 0.0);
+        assert_eq!(crate::attr_num(&w, tm, "PowerConsumed"), 10.0);
     }
 }

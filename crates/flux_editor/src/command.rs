@@ -27,12 +27,14 @@ pub enum Command {
         parent: InstanceId,
         created: Option<InstanceId>,
     },
-    /// Create an instance and set some props in one undo step (e.g. drop an asset
-    /// to make a Sprite with a Texture, or a Script with a SourcePath).
+    /// Create an instance and set some props/attributes in one undo step (e.g.
+    /// drop an asset to make a Sprite with a Texture, or a Tilemap carrying a
+    /// plugin catalog attribute).
     CreateWith {
         class_name: &'static str,
         parent: InstanceId,
         props: Vec<(&'static str, Value)>,
+        attrs: Vec<(String, Value)>,
         created: Option<InstanceId>,
     },
     Delete {
@@ -101,6 +103,22 @@ impl Command {
             class_name,
             parent,
             props,
+            attrs: Vec::new(),
+            created: None,
+        }
+    }
+
+    pub fn create_with_attrs(
+        class_name: &'static str,
+        parent: InstanceId,
+        props: Vec<(&'static str, Value)>,
+        attrs: Vec<(String, Value)>,
+    ) -> Self {
+        Command::CreateWith {
+            class_name,
+            parent,
+            props,
+            attrs,
             created: None,
         }
     }
@@ -171,11 +189,15 @@ impl Command {
                 class_name,
                 parent,
                 props,
+                attrs,
                 created,
             } => {
                 let id = w.create(class_name, *parent)?;
                 for (prop, value) in props.iter() {
                     w.set_prop(id, prop, value.clone())?;
+                }
+                for (name, value) in attrs.iter() {
+                    w.set_attribute(id, name, Some(value.clone()))?;
                 }
                 let map = created.map(|prev| RemapMap::from([(prev, id)]));
                 *created = Some(id);
