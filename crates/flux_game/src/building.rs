@@ -84,6 +84,56 @@ pub struct BuildingDoc {
     pub tanks: Vec<crate::fluids::TankDoc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reactor: Option<ReactorDoc>,
+    /// Steam turbine: converts steam from its tank into electric power.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turbine: Option<TurbineDoc>,
+    /// Fluid pump: sources `fluid` into its tank while on/next to `source_tile`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pump: Option<PumpDoc>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TurbineDoc {
+    /// MW at full steam intake.
+    #[serde(default = "hundred")]
+    pub power: f32,
+    /// Steam units consumed per second at full load.
+    #[serde(default = "default_steam_use")]
+    pub steam_use: f32,
+    /// Tank slot the steam is drawn from.
+    #[serde(default = "default_steam_tank")]
+    pub tank: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PumpDoc {
+    #[serde(default = "default_pump_fluid")]
+    pub fluid: String,
+    /// Units produced per second.
+    #[serde(default = "default_pump_rate")]
+    pub rate: f32,
+    /// Terrain tile id required on/adjacent to the footprint.
+    #[serde(default = "default_pump_fluid")]
+    pub source_tile: String,
+    /// Tank slot filled.
+    #[serde(default = "default_pump_tank")]
+    pub tank: String,
+}
+
+fn default_steam_use() -> f32 {
+    6.0
+}
+fn default_steam_tank() -> String {
+    "steam".into()
+}
+fn default_pump_fluid() -> String {
+    "water".into()
+}
+fn default_pump_rate() -> f32 {
+    8.0
+}
+fn default_pump_tank() -> String {
+    "out".into()
 }
 
 /// Nuclear-reactor tuning (see [`crate::reactor`]).
@@ -105,6 +155,24 @@ pub struct ReactorDoc {
     pub fuel: String,
     #[serde(default = "default_refuel")]
     pub refuel: f32,
+    /// Coolant (water) consumed per second at full reactivity. Only active
+    /// when the def declares `water`/`steam` tanks — legacy air-cooled
+    /// reactors keep the old behaviour.
+    #[serde(default = "default_water_use")]
+    pub water_use: f32,
+    /// Item emitted as spent fuel ("" = no waste mechanics).
+    #[serde(default)]
+    pub waste_item: String,
+    /// Fuel percentage burned per emitted waste item.
+    #[serde(default = "default_waste_every")]
+    pub waste_every: f32,
+}
+
+fn default_water_use() -> f32 {
+    5.0
+}
+fn default_waste_every() -> f32 {
+    25.0
 }
 
 fn one_by_one() -> [u32; 2] {
@@ -172,6 +240,8 @@ pub struct BuildingDef {
     pub ports: Vec<crate::ports::Port>,
     pub tanks: Vec<crate::fluids::TankDoc>,
     pub reactor: Option<ReactorParams>,
+    pub turbine: Option<TurbineDoc>,
+    pub pump: Option<PumpDoc>,
 }
 
 /// Tile-space offset for a `Direction` value (0=+x, 1=+y, 2=-x, 3=-y).
@@ -213,6 +283,9 @@ pub struct ReactorParams {
     pub optimal: f32,
     pub fuel_item: String,
     pub refuel: f32,
+    pub water_use: f32,
+    pub waste_item: String,
+    pub waste_every: f32,
 }
 
 pub struct BuildingCatalog {
@@ -257,6 +330,8 @@ impl BuildingCatalog {
                     }),
                     ports: b.ports.iter().filter_map(crate::ports::Port::from_doc).collect(),
                     tanks: b.tanks.clone(),
+                    turbine: b.turbine.clone(),
+                    pump: b.pump.clone(),
                     reactor: b.reactor.as_ref().map(|r| ReactorParams {
                         power: r.power.max(0.0),
                         heat: r.heat.max(0.0),
@@ -266,6 +341,9 @@ impl BuildingCatalog {
                         optimal: r.optimal.max(1.0),
                         fuel_item: r.fuel.clone(),
                         refuel: r.refuel.max(0.0),
+                        water_use: r.water_use.max(0.0),
+                        waste_item: r.waste_item.clone(),
+                        waste_every: r.waste_every.max(1.0),
                     }),
                 }
             })

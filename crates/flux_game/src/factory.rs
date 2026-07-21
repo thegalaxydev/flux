@@ -353,9 +353,14 @@ fn resolve_state(
     let Some(def) = cat.get(&text(world, b, "Type")) else {
         return;
     };
-    // ReactorSystem owns reactor + cooling-tower states; pipe sprites are
-    // shape-driven (connectivity masks), not state-driven.
-    if def.reactor.is_some() || def.cooling > 0.0 || def.pipe {
+    // ReactorSystem owns reactor/cooling-tower/turbine states, FluidSystem
+    // owns pumps; pipe sprites are shape-driven (connectivity masks).
+    if def.reactor.is_some()
+        || def.cooling > 0.0
+        || def.pipe
+        || def.turbine.is_some()
+        || def.pump.is_some()
+    {
         return;
     }
     let hold = (num(world, b, "_StateHold") - dt).max(0.0);
@@ -592,9 +597,24 @@ fn transport(
         let Some(def) = cat.get(&text(world, b, "Type")) else {
             continue;
         };
-        // Only belts and producers emit items; stores/consumers just hold them.
+        // Belts, producers, and machines with item OUTPUT ports emit items
+        // (e.g. a reactor pushing spent fuel); stores/consumers just hold.
         let is_producer = def.mines || def.recipe.is_some();
-        if !def.directional && !is_producer {
+        let out_port_accepts: Option<Vec<String>> = crate::ports::of(world, b).map(|baked| {
+            baked
+                .0
+                .iter()
+                .filter(|rp| rp.port.kind == crate::ports::PortKind::Item && rp.port.flow.gives_output())
+                .flat_map(|rp| rp.port.accepts.clone())
+                .collect()
+        });
+        let has_item_out = out_port_accepts.is_some()
+            && crate::ports::of(world, b).is_some_and(|baked| {
+                baked.0.iter().any(|rp| {
+                    rp.port.kind == crate::ports::PortKind::Item && rp.port.flow.gives_output()
+                })
+            });
+        if !def.directional && !is_producer && !has_item_out {
             continue;
         }
         let (n, acc) = ticks(num(world, b, "_Flow"), def.rate.max(1.0), dt);
@@ -613,6 +633,15 @@ fn transport(
         let givable: Vec<(String, u32)> = inv
             .iter()
             .filter(|(id, _)| !my_inputs.contains(id))
+            .filter(|(id, _)| match &out_port_accepts {
+                // A ports-machine only ships what its output ports declare
+                // (a reactor gives waste, never its uranium fuel). An empty
+                // accepts list on an out port means "anything non-input".
+                Some(accepts) if !def.directional && !def.mines && def.recipe.is_none() => {
+                    accepts.is_empty() || accepts.iter().any(|a| a == id)
+                }
+                _ => true,
+            })
             .map(|(id, c)| (id.to_string(), c))
             .collect();
         if givable.is_empty() {

@@ -74,6 +74,8 @@ pub fn generate(root: &Path) -> Result<(), String> {
     })?;
     save("storage", cube_icon(rgb(146, 110, 72), None))?;
 
+    save("pump", cube_icon(rgb(70, 110, 160), Some(rgb(90, 160, 255))))?;
+
     // Items.
     save("coal", nuggets_icon(rgb(38, 38, 44), 11))?;
     save("iron", nuggets_icon(rgb(196, 134, 106), 22))?;

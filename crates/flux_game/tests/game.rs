@@ -357,6 +357,102 @@ fn input_only_ports_never_emit() {
 }
 
 #[test]
+fn reactor_steam_loop_end_to_end() {
+    let root = setup();
+    let mut session = session_world(root);
+    let (reactor, turbine, storage) = {
+        let world = session.world();
+        let mut w = world.borrow_mut();
+        let map = w.find_first_child(w.workspace(), "Map").unwrap();
+        let cat = flux_game::building::BuildingCatalog::parse(
+            &std::fs::read_to_string(root.join("test.buildings.json")).unwrap(),
+        )
+        .unwrap();
+        // A water tile next to the pump; pump -> pipes -> reactor west port;
+        // turbine hugs the reactor's east steam port (direct pair); waste
+        // exits south onto a belt into storage.
+        let water_idx = 3; // "water" in test.tileset.json
+        w.tile_grid_mut(map).unwrap().set_tile(1, 5, water_idx);
+        let pump = flux_game::building::place(&mut w, map, cat.get("pump").unwrap(), 2, 5, 0).unwrap();
+        flux_game::building::place(&mut w, map, cat.get("pipe").unwrap(), 3, 5, 0).unwrap();
+        flux_game::building::place(&mut w, map, cat.get("pipe").unwrap(), 4, 5, 0).unwrap();
+        let reactor =
+            flux_game::building::place(&mut w, map, cat.get("nreactor").unwrap(), 5, 5, 0).unwrap();
+        let turbine =
+            flux_game::building::place(&mut w, map, cat.get("turbine2").unwrap(), 7, 5, 0).unwrap();
+        let belt = flux_game::building::place(&mut w, map, cat.get("belt").unwrap(), 5, 7, 1).unwrap();
+        let storage =
+            flux_game::building::place(&mut w, map, cat.get("storage").unwrap(), 5, 8, 0).unwrap();
+        // Fuel straight into the reactor (port-fed delivery covered elsewhere)
+        // and pull the rods.
+        if let Some(inv) = w.component_mut::<Inventory>(reactor) {
+            inv.add("uranium", 10);
+        }
+        w.set_prop(reactor, "ControlRods", Value::Number(0.0)).unwrap();
+        let _ = (pump, belt);
+        (reactor, turbine, storage)
+    };
+    for _ in 0..400 {
+        session.step(0.1, &InputFrame::default());
+    }
+    let world = session.world();
+    let w = world.borrow();
+    let num = |b, p: &str| match w.get_prop(b, p) {
+        Some(Value::Number(n)) => *n as f32,
+        _ => 0.0,
+    };
+    let status = |b| match w.get_prop(b, "_Status") {
+        Some(Value::String(s)) => s.clone(),
+        _ => String::new(),
+    };
+    // Water reached the reactor, steam reached the turbine, power flows.
+    assert!(tank_volume(&w, reactor, "water") > 0.0, "coolant arrived");
+    assert!(num(turbine, "PowerOutput") > 50.0, "turbine generating: {}", num(turbine, "PowerOutput"));
+    assert_eq!(status(reactor), "", "reactor healthy: {:?}", status(reactor));
+    // Spent fuel left through the waste port onto the belt into storage.
+    let waste = w.component::<Inventory>(storage).map(|i| i.count("waste")).unwrap_or(0);
+    assert!(waste >= 1, "waste should reach storage: {waste}");
+    // And the reactor never gave away its uranium.
+    let fuel_left = w.component::<Inventory>(reactor).map(|i| i.count("uranium")).unwrap_or(99);
+    let storage_uranium = w.component::<Inventory>(storage).map(|i| i.count("uranium")).unwrap_or(0);
+    assert_eq!(storage_uranium, 0, "fuel must not leak out of the waste port");
+    let _ = fuel_left;
+}
+
+#[test]
+fn reactor_without_coolant_reports_and_stalls() {
+    let root = setup();
+    let mut session = session_world(root);
+    let reactor = {
+        let world = session.world();
+        let mut w = world.borrow_mut();
+        let map = w.find_first_child(w.workspace(), "Map").unwrap();
+        let cat = flux_game::building::BuildingCatalog::parse(
+            &std::fs::read_to_string(root.join("test.buildings.json")).unwrap(),
+        )
+        .unwrap();
+        let reactor =
+            flux_game::building::place(&mut w, map, cat.get("nreactor").unwrap(), 5, 5, 0).unwrap();
+        if let Some(inv) = w.component_mut::<Inventory>(reactor) {
+            inv.add("uranium", 5);
+        }
+        w.set_prop(reactor, "ControlRods", Value::Number(0.0)).unwrap();
+        reactor
+    };
+    for _ in 0..50 {
+        session.step(0.1, &InputFrame::default());
+    }
+    let world = session.world();
+    let w = world.borrow();
+    let status = match w.get_prop(reactor, "_Status") {
+        Some(Value::String(s)) => s.clone(),
+        _ => String::new(),
+    };
+    assert_eq!(status, "Missing coolant");
+    assert_eq!(tank_volume(&w, reactor, "steam"), 0.0, "no steam without water");
+}
+
+#[test]
 fn tanks_round_trip_through_save() {
     let root = setup();
     let mut w = World::new();

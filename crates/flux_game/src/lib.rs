@@ -86,6 +86,10 @@ fn install_classes() {
             prop_t("_StateHold", Value::Number(0.0)),
             // Pipe connectivity mask cache (see flux_game::pipes).
             prop_t("_Mask", Value::Number(-1.0)),
+            // Human-readable problem/status line ("Missing coolant", …).
+            prop_t("_Status", Value::String(String::new())),
+            // Spent-fuel accumulator (reactor waste mechanics).
+            prop_t("_WasteAcc", Value::Number(0.0)),
             prop("Temperature", Value::Number(20.0)),
             prop("Fuel", Value::Number(0.0)),
             prop("ControlRods", Value::Number(1.0)),

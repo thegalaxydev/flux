@@ -121,6 +121,9 @@ pub fn step(world: &mut World, buildings: &mut BuildingCatalogCache, root: &Path
                     );
                 }
             }
+            if let Some(tp) = &def.turbine {
+                produced += turbine(world, b, tp, dt);
+            }
         }
         // Cooling towers vent steam while they're actually shedding heat.
         for (t, _, _) in &towers {
@@ -132,13 +135,32 @@ pub fn step(world: &mut World, buildings: &mut BuildingCatalogCache, root: &Path
     }
 }
 
-/// Advance one reactor; returns the power it generated (0 after meltdown).
+fn set_status(world: &mut World, b: InstanceId, status: &str) {
+    if text(world, b, "_Status") != status {
+        let _ = world.set_prop(b, "_Status", Value::String(status.to_string()));
+    }
+}
+
+/// Advance one reactor; returns the ELECTRIC power it generated this frame.
+///
+/// Two modes, chosen by the def's tanks:
+/// - **Steam reactor** (declares `water` + `steam` tanks): consumes coolant
+///   water ∝ reactivity, converts it to steam (its real output — turbines
+///   make the electricity), emits waste items per fuel burned, and loses
+///   most of its cooling when coolant is missing or the steam tank is full.
+///   Generates no electricity directly. A blocked waste output SCRAMs it.
+/// - **Legacy air-cooled** (no tanks): the original direct-power dynamics.
+///
 /// `cooling_boost` is the summed coefficient from adjacent cooling towers.
 fn simulate(world: &mut World, b: InstanceId, rp: &ReactorParams, cooling_boost: f32, dt: f32) -> f32 {
     let mut temp = num(world, b, "Temperature");
     let mut fuel = num(world, b, "Fuel");
     let mut integrity = num(world, b, "Integrity");
     let rods = num(world, b, "ControlRods").clamp(0.0, 1.0);
+
+    let steam_mode = world
+        .component::<crate::fluids::Tank>(b)
+        .is_some_and(|t| t.slot("water").is_some() && t.slot("steam").is_some());
 
     // Refuel from inventory when low.
     if !rp.fuel_item.is_empty() && fuel <= 100.0 - rp.refuel {
@@ -151,39 +173,136 @@ fn simulate(world: &mut World, b: InstanceId, rp: &ReactorParams, cooling_boost:
         }
     }
 
-    let reactivity = if fuel > 0.0 { 1.0 - rods } else { 0.0 };
-    fuel = (fuel - reactivity * rp.burn * dt).max(0.0);
+    let mut reactivity = if fuel > 0.0 { 1.0 - rods } else { 0.0 };
+    let mut status = if fuel <= 0.0 { "No fuel" } else { "" };
+
+    // Waste handling first: a blocked waste output SCRAMs the reactor.
+    let mut waste_blocked = false;
+    if steam_mode && !rp.waste_item.is_empty() {
+        let acc = num(world, b, "_WasteAcc");
+        if acc >= rp.waste_every {
+            let added = world
+                .component_mut::<Inventory>(b)
+                .map(|inv| inv.add(&rp.waste_item, 1))
+                .unwrap_or(0);
+            if added > 0 {
+                set(world, b, "_WasteAcc", acc - rp.waste_every);
+            } else {
+                waste_blocked = true;
+                reactivity = 0.0;
+                status = "Output blocked";
+            }
+        }
+    }
+
+    // Coolant conversion: water in -> steam out; missing coolant or a full
+    // steam tank collapses the water-loop cooling.
+    let mut coolant_factor = 1.0;
+    if steam_mode && reactivity > 0.0 {
+        let want = reactivity * rp.water_use * dt;
+        let (drained, steamed) = match world.component_mut::<crate::fluids::Tank>(b) {
+            Some(tank) => {
+                // Convert what both sides allow: available water AND steam space.
+                let avail = tank.slot("water").map(|s| s.volume).unwrap_or(0.0);
+                let space = tank.slot("steam").map(|s| s.space()).unwrap_or(0.0);
+                let convert = want.min(avail).min(space);
+                if convert > 0.0 {
+                    tank.slot_mut("water").unwrap().drain(convert);
+                    tank.slot_mut("steam").unwrap().fill("steam", convert);
+                }
+                (avail, convert)
+            }
+            None => (0.0, 0.0),
+        };
+        if want > 0.0 {
+            coolant_factor = 0.15 + 0.85 * (steamed / want).clamp(0.0, 1.0);
+        }
+        if !waste_blocked {
+            if drained < want * 0.5 {
+                status = "Missing coolant";
+            } else if steamed < want * 0.5 {
+                status = "Steam tank full";
+            }
+        }
+    }
+
+    let burned = reactivity * rp.burn * dt;
+    fuel = (fuel - burned).max(0.0);
+    if steam_mode && !rp.waste_item.is_empty() {
+        set(world, b, "_WasteAcc", num(world, b, "_WasteAcc") + burned);
+    }
 
     let heat_in = reactivity * rp.heat * dt;
-    let cooling = (rp.cooling + cooling_boost) * (temp - AMBIENT) * dt;
+    let water_cooling = if steam_mode { (rp.cooling + cooling_boost) * coolant_factor } else { rp.cooling + cooling_boost };
+    let cooling = water_cooling * (temp - AMBIENT) * dt;
     temp = (temp + heat_in - cooling).max(AMBIENT);
 
     if temp > rp.meltdown {
         integrity = (integrity - (temp - rp.meltdown) * 0.02 * dt).max(0.0);
     }
 
-    let power = if integrity <= 0.0 {
-        0.0
+    // Steam reactors report their steam rate on the gauge and generate no
+    // electricity directly; legacy reactors keep direct generation.
+    let (power, output) = if integrity <= 0.0 {
+        (0.0, 0.0)
+    } else if steam_mode {
+        (0.0, reactivity * rp.water_use * coolant_factor)
     } else {
-        reactivity * rp.power * efficiency(temp, rp.optimal)
+        let p = reactivity * rp.power * efficiency(temp, rp.optimal);
+        (p, p)
     };
 
     set(world, b, "Temperature", temp);
     set(world, b, "Fuel", fuel);
     set(world, b, "Integrity", integrity);
-    set(world, b, "PowerOutput", power);
+    set(world, b, "PowerOutput", output);
 
     // Visible reactor state -> sprite clip (off/running/hot/meltdown).
     let state = if integrity <= 0.0 {
+        set_status(world, b, "MELTDOWN");
         "meltdown"
     } else if temp > rp.optimal * 1.2 {
+        if status.is_empty() {
+            status = "Overheating";
+        }
+        set_status(world, b, status);
         "hot"
-    } else if power > 0.5 {
+    } else if reactivity > 0.0 && (output > 0.05 || !steam_mode) {
+        set_status(world, b, status);
         "running"
     } else {
+        if status.is_empty() && rods >= 1.0 {
+            status = "Control rods inserted";
+        }
+        set_status(world, b, status);
         "off"
     };
     crate::factory::apply_state(world, b, state);
+    power
+}
+
+/// Advance one steam turbine; returns the electric power generated.
+fn turbine(world: &mut World, b: InstanceId, tp: &crate::building::TurbineDoc, dt: f32) -> f32 {
+    let want = tp.steam_use * dt;
+    let got = {
+        let Some(tank) = world.component_mut::<crate::fluids::Tank>(b) else {
+            return 0.0;
+        };
+        match tank.slot_mut(&tp.tank) {
+            Some(s) if s.fluid == "steam" || s.fluid.is_empty() => s.drain(want),
+            _ => 0.0,
+        }
+    };
+    let load = if want > 0.0 { (got / want).clamp(0.0, 1.0) } else { 0.0 };
+    let power = tp.power * load;
+    set(world, b, "PowerOutput", power);
+    if load > 0.05 {
+        set_status(world, b, "");
+        crate::factory::apply_state(world, b, "working");
+    } else {
+        set_status(world, b, "No steam");
+        crate::factory::apply_state(world, b, "idle");
+    }
     power
 }
 

@@ -232,6 +232,7 @@ pub const TICK: f32 = 0.1;
 #[derive(Default)]
 pub struct FluidSystem {
     buildings: BuildingCatalogCache,
+    tilesets: flux_core::tilemap::TileSetCache,
     acc: f32,
 }
 
@@ -240,7 +241,7 @@ impl flux_runtime::System for FluidSystem {
         self.acc += dt;
         while self.acc >= TICK {
             self.acc -= TICK;
-            tick(world, &mut self.buildings, root);
+            tick(world, &mut self.buildings, &mut self.tilesets, root);
         }
     }
 }
@@ -266,7 +267,12 @@ struct Attached {
 }
 
 /// Advance every tilemap's fluid networks by one fixed tick.
-pub fn tick(world: &mut World, buildings: &mut BuildingCatalogCache, root: &Path) {
+pub fn tick(
+    world: &mut World,
+    buildings: &mut BuildingCatalogCache,
+    tilesets: &mut flux_core::tilemap::TileSetCache,
+    root: &Path,
+) {
     let maps: Vec<InstanceId> = world
         .descendants(world.workspace())
         .into_iter()
@@ -288,6 +294,45 @@ pub fn tick(world: &mut World, buildings: &mut BuildingCatalogCache, root: &Path
             .copied()
             .filter(|&c| world.class_name(c) == Some("Building"))
             .collect();
+
+        // Pumps: source their fluid while on/next to their source terrain.
+        let ts_path = match world.get_prop(tm, "TileSet") {
+            Some(Value::Asset(s)) => s.clone(),
+            _ => String::new(),
+        };
+        let tileset = tilesets.get(&ts_path, root);
+        for &b in &ids {
+            let Some(def) = cat.get(&text(world, b, "Type")) else { continue };
+            let Some(pd) = &def.pump else { continue };
+            let (c, r) = cell_of(world, b);
+            let (w, h) = (def.width as i32, def.height as i32);
+            let near_source = tileset
+                .as_deref()
+                .and_then(|ts| ts.index_of(&pd.source_tile))
+                .is_some_and(|want| {
+                    world.tile_grid(tm).is_some_and(|g| {
+                        (c - 1..=c + w).any(|x| {
+                            (r - 1..=r + h).any(|y| g.cell(x, y).is_some_and(|cl| cl.tile == want))
+                        })
+                    })
+                });
+            if near_source {
+                let filled = world
+                    .component_mut::<Tank>(b)
+                    .and_then(|t| t.slot_mut(&pd.tank).map(|s| s.fill(&pd.fluid, pd.rate * TICK)))
+                    .unwrap_or(0.0);
+                let status = if filled > 0.0 { "" } else { "Tank full" };
+                if text(world, b, "_Status") != status {
+                    let _ = world.set_prop(b, "_Status", Value::String(status.into()));
+                }
+                crate::factory::apply_state(world, b, if filled > 0.0 { "working" } else { "idle" });
+            } else {
+                if text(world, b, "_Status") != "No water source" {
+                    let _ = world.set_prop(b, "_Status", Value::String("No water source".into()));
+                }
+                crate::factory::apply_state(world, b, "starved");
+            }
+        }
 
         // Pipes sorted by cell for deterministic iteration; ensure their
         // implicit tank exists (loaded worlds may lack the component only if

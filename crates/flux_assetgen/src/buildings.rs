@@ -491,6 +491,40 @@ fn pipe() -> BuildingArt {
     }
 }
 
+fn pump() -> BuildingArt {
+    let (fw, fd) = (1.0, 1.0);
+    let fr = frame_for(fw, fd, 30.0);
+    let blue: Rgba = crate::canvas::rgb(70, 110, 160);
+    let render = |lamp_on: Option<Rgba>| {
+        let mut c = base(&fr, fw, fd);
+        // Pump housing + intake dome + outlet stub toward +x.
+        IsoBox { tx: 0.12, ty: 0.12, w: 0.76, d: 0.76, h: 12.0, color: blue }.draw(&mut c, fr.ox, fr.oy);
+        let (hx, hy) = iso::proj(0.5, 0.5);
+        dome(&mut c, fr.ox + hx, fr.oy + hy - 12.0, 11.0, shade(blue, 1.1));
+        let (ox2, oy2) = iso::proj(0.95, 0.5);
+        c.fill_ellipse(fr.ox + ox2, fr.oy + oy2 - 8.0, 5.0, 3.4, STEEL_DARK);
+        c.outline();
+        if let Some(col) = lamp_on {
+            lamp(&mut c, fr.ox + hx, fr.oy + hy - 24.0, col, true);
+        } else {
+            lamp(&mut c, fr.ox + hx, fr.oy + hy - 24.0, LAMP_GREEN, false);
+        }
+        c
+    };
+    BuildingArt {
+        id: "pump",
+        foot: (fw, fd),
+        frame: (fr.w, fr.h),
+        pivot: pivot_of(&fr, fw, fd),
+        clips: vec![
+            Clip { name: "idle", frames: vec![render(None)], duration: 0.5, looped: true },
+            Clip { name: "working", frames: vec![render(Some(LAMP_GREEN)), render(None)], duration: 0.3, looped: true },
+            Clip { name: "starved", frames: vec![render(Some(LAMP_AMBER)), render(None)], duration: 0.4, looped: true },
+        ],
+        aliases: vec![],
+    }
+}
+
 fn storage() -> BuildingArt {
     let (fw, fd) = (1.0, 1.0);
     let fr = frame_for(fw, fd, 26.0);
@@ -526,6 +560,7 @@ pub fn all() -> Vec<BuildingArt> {
         miner(),
         belt(),
         pipe(),
+        pump(),
         storage(),
     ]
 }
