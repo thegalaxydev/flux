@@ -184,6 +184,48 @@ fn conveyor_respects_ports() {
 }
 
 #[test]
+fn pipe_visuals_follow_connectivity() {
+    let root = setup();
+    let mut session = session_world(root);
+    let (mid, end_w, arm_s, lone) = {
+        let world = session.world();
+        let mut w = world.borrow_mut();
+        let map = w.find_first_child(w.workspace(), "Map").unwrap();
+        let cat = flux_game::building::BuildingCatalog::parse(
+            &std::fs::read_to_string(root.join("test.buildings.json")).unwrap(),
+        )
+        .unwrap();
+        let pipe = cat.get("pipe").unwrap();
+        // A T shape: west-east run through (5,5) plus a south arm.
+        let end_w = flux_game::building::place(&mut w, map, pipe, 4, 5, 0).unwrap();
+        let mid = flux_game::building::place(&mut w, map, pipe, 5, 5, 0).unwrap();
+        let _e = flux_game::building::place(&mut w, map, pipe, 6, 5, 0).unwrap();
+        let arm_s = flux_game::building::place(&mut w, map, pipe, 5, 6, 0).unwrap();
+        // Plus a lone pipe next to the boiler's liquid port: boiler at (10,10),
+        // port cell (10,10) facing (10,9) -> pipe there connects south.
+        flux_game::building::place(&mut w, map, cat.get("boiler").unwrap(), 10, 10, 0).unwrap();
+        let lone = flux_game::building::place(&mut w, map, pipe, 10, 9, 0).unwrap();
+        (mid, end_w, arm_s, lone)
+    };
+    for _ in 0..3 {
+        session.step(0.05, &InputFrame::default());
+    }
+    let world = session.world();
+    let w = world.borrow();
+    let anim = |b| {
+        let sprite = flux_game::building::sprite_of(&w, b).unwrap();
+        match w.get_prop(sprite, "Animation") {
+            Some(Value::String(s)) => s.clone(),
+            _ => String::new(),
+        }
+    };
+    assert_eq!(anim(mid), "m14", "T junction: E+S+W");
+    assert_eq!(anim(end_w), "m2", "west end connects east only");
+    assert_eq!(anim(arm_s), "m1", "south arm connects north only");
+    assert_eq!(anim(lone), "m4", "pipe connects to the boiler port to its south");
+}
+
+#[test]
 fn map_held_inventory_round_trips_through_save() {
     // The shop/inventory game stores the player's building stock in an Inventory
     // on the Tilemap itself (not a Building). Prove that generic inventory

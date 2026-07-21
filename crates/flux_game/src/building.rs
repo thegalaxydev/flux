@@ -58,6 +58,10 @@ pub struct BuildingDoc {
     /// 2=-x, 3=-y) and only hands items to the building it points at.
     #[serde(default)]
     pub directional: bool,
+    /// Fluid pipe: undirected, auto-connects to neighbouring pipes and fluid
+    /// ports; participates in the pipe network, never in item transport.
+    #[serde(default)]
+    pub pipe: bool,
     /// Money cost to place this building (enforced by the game, not the engine).
     #[serde(default)]
     pub cost: f32,
@@ -159,6 +163,7 @@ pub struct BuildingDef {
     pub power_use: f32,
     pub cooling: f32,
     pub directional: bool,
+    pub pipe: bool,
     pub cost: f32,
     pub sprite: Option<SpriteArt>,
     pub ports: Vec<crate::ports::Port>,
@@ -239,6 +244,7 @@ impl BuildingCatalog {
                     power_use: b.power_use.max(0.0),
                     cooling: b.cooling.max(0.0),
                     directional: b.directional,
+                    pipe: b.pipe,
                     cost: b.cost.max(0.0),
                     sprite: b.sprite.as_ref().map(|frames| SpriteArt {
                         frames: frames.clone(),

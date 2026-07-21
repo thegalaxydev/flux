@@ -13,6 +13,9 @@
       "ports": [
         { "id": "water_in", "kind": "liquid", "flow": "in", "side": "n", "offset": 0 }
       ] },
+    { "id": "pipe",    "name": "Pipe",     "size": [1, 1], "color": [0.45, 0.5, 0.57, 1],
+      "pipe": true, "capacity": 0,
+      "sprite": "art/pipe.frames.json", "sprite_size": [76, 58], "sprite_pivot": [0.5, 0.655] },
     { "id": "hopper",  "name": "Hopper",   "size": [1, 1], "color": [0.7, 0.7, 0.4, 1],
       "ports": [
         { "id": "item_in", "kind": "item", "flow": "in", "side": "n", "offset": 0, "limit": 1 }

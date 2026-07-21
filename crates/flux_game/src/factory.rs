@@ -353,8 +353,9 @@ fn resolve_state(
     let Some(def) = cat.get(&text(world, b, "Type")) else {
         return;
     };
-    // ReactorSystem owns reactor + cooling-tower states.
-    if def.reactor.is_some() || def.cooling > 0.0 {
+    // ReactorSystem owns reactor + cooling-tower states; pipe sprites are
+    // shape-driven (connectivity masks), not state-driven.
+    if def.reactor.is_some() || def.cooling > 0.0 || def.pipe {
         return;
     }
     let hold = (num(world, b, "_StateHold") - dt).max(0.0);

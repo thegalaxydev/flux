@@ -59,6 +59,19 @@ pub fn generate(root: &Path) -> Result<(), String> {
     save("smelter", cube_icon(rgb(168, 104, 60), Some(rgb(255, 168, 64))))?;
     save("miner", cube_icon(rgb(92, 100, 112), Some(rgb(255, 192, 64))))?;
     save("belt", cube_icon(rgb(92, 100, 112), None))?;
+    save("pipe", {
+        // A short horizontal tube.
+        let mut c = Canvas::new(SIZE, SIZE);
+        let steel = rgb(112, 126, 146);
+        for i in 0..=10 {
+            let x = 5.0 + i as f32 * 1.8;
+            c.fill_ellipse(x, 14.0, 3.6, 4.2, shade(steel, 1.0 - i as f32 * 0.015));
+        }
+        c.fill_ellipse(23.0, 14.0, 2.2, 4.2, shade(steel, 0.7));
+        c.fill_ellipse(5.0, 14.0, 2.2, 4.2, shade(steel, 1.25));
+        c.outline();
+        c
+    })?;
     save("storage", cube_icon(rgb(146, 110, 72), None))?;
 
     // Items.

@@ -425,6 +425,72 @@ fn belt() -> BuildingArt {
     }
 }
 
+/// Clip names for the 16 pipe connectivity masks (N=1, E=2, S=4, W=8 in tile
+/// space). The runtime picks the clip from its neighbour mask.
+pub const PIPE_MASKS: [&str; 16] = [
+    "m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9", "m10", "m11", "m12", "m13", "m14",
+    "m15",
+];
+
+fn pipe() -> BuildingArt {
+    let (fw, fd) = (1.0, 1.0);
+    let fr = frame_for(fw, fd, 16.0);
+    let steel: Rgba = crate::canvas::rgb(112, 126, 146);
+    let (cx, cy) = {
+        let (x, y) = iso::proj(0.5, 0.5);
+        (fr.ox + x, fr.oy + y)
+    };
+    // Tile-space edge midpoints for each mask bit: N(-y), E(+x), S(+y), W(-x).
+    let edges = [(0.5, 0.0), (1.0, 0.5), (0.5, 1.0), (0.0, 0.5)];
+
+    let render = |mask: u8| {
+        let mut c = Canvas::new(fr.w, fr.h);
+        c.shadow(cx, cy + 2.0, 26.0, 12.0, 70);
+        // Arms toward each connected edge, drawn as capsule runs of ellipses.
+        for (bit, (tx, ty)) in edges.iter().enumerate() {
+            if mask & (1 << bit) == 0 {
+                continue;
+            }
+            let (ex, ey) = iso::proj(*tx, *ty);
+            let (ex, ey) = (fr.ox + ex, fr.oy + ey);
+            for i in 0..=8 {
+                let t = i as f32 / 8.0;
+                let (px, py) = (cx + (ex - cx) * t, cy + (ey - cy) * t - 5.0);
+                c.fill_ellipse(px, py, 5.5, 3.6, shade(steel, 1.02 - t * 0.12));
+                c.fill_ellipse(px - 1.0, py - 1.5, 2.4, 1.2, shade(steel, 1.35));
+            }
+        }
+        // Central hub (also the whole art for a lone segment).
+        c.fill_ellipse(cx, cy - 5.0, 7.0, 4.6, shade(steel, 1.12));
+        c.fill_ellipse(cx - 1.5, cy - 6.5, 2.8, 1.5, shade(steel, 1.45));
+        c.outline();
+        c
+    };
+
+    let mut clips: Vec<Clip> = (0u8..16)
+        .map(|m| Clip {
+            name: PIPE_MASKS[m as usize],
+            frames: vec![render(m)],
+            duration: 0.5,
+            looped: true,
+        })
+        .collect();
+    // State clips are aliases: pipe visuals are shape-driven, not state-driven.
+    clips.shrink_to_fit();
+    BuildingArt {
+        id: "pipe",
+        foot: (fw, fd),
+        frame: (fr.w, fr.h),
+        pivot: pivot_of(&fr, fw, fd),
+        clips,
+        aliases: vec![
+            Alias { name: "idle", target: "m0" },
+            Alias { name: "working", target: "m0" },
+            Alias { name: "starved", target: "m0" },
+        ],
+    }
+}
+
 fn storage() -> BuildingArt {
     let (fw, fd) = (1.0, 1.0);
     let fr = frame_for(fw, fd, 26.0);
@@ -451,7 +517,17 @@ fn storage() -> BuildingArt {
 }
 
 pub fn all() -> Vec<BuildingArt> {
-    vec![control_room(), reactor(), cooling_tower(), turbine(), smelter(), miner(), belt(), storage()]
+    vec![
+        control_room(),
+        reactor(),
+        cooling_tower(),
+        turbine(),
+        smelter(),
+        miner(),
+        belt(),
+        pipe(),
+        storage(),
+    ]
 }
 
 // ---------------------------------------------------------------------------

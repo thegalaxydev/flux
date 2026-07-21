@@ -8,6 +8,7 @@
 
 pub mod building;
 pub mod factory;
+pub mod pipes;
 pub mod ports;
 pub mod reactor;
 mod lua;
@@ -39,6 +40,7 @@ pub fn install() {
         // Per-session simulation systems.
         flux_runtime::register_system(|| Box::new(factory::FactorySystem::default()));
         flux_runtime::register_system(|| Box::new(reactor::ReactorSystem::default()));
+        flux_runtime::register_system(|| Box::new(pipes::PipeSystem::default()));
 
         // Lua API + overlay rendering.
         lua::install();
@@ -76,6 +78,8 @@ fn install_classes() {
             // off/running/hot/meltdown) — drives the child sprite's clip.
             prop_t("_State", Value::String(String::new())),
             prop_t("_StateHold", Value::Number(0.0)),
+            // Pipe connectivity mask cache (see flux_game::pipes).
+            prop_t("_Mask", Value::Number(-1.0)),
             prop("Temperature", Value::Number(20.0)),
             prop("Fuel", Value::Number(0.0)),
             prop("ControlRods", Value::Number(1.0)),
