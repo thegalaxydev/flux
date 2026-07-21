@@ -1,0 +1,7 @@
+# flux_script builds as a Rust dylib shared by the engine apps and plugin
+# cdylibs (single mlua/Luau per process — see crates/flux_script/Cargo.toml).
+# Rust dylibs require dynamically-linked std everywhere, hence prefer-dynamic.
+# Note: run binaries via `cargo run` (it sets the dylib search path), or ship
+# the toolchain's std-*.dll next to the exe for standalone distribution.
+[build]
+rustflags = ["-C", "prefer-dynamic"]

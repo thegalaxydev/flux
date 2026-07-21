@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-flux_game.workspace = true
+flux_plugin.workspace = true
 flux_runtime.workspace = true
 flux_view.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }

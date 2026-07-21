@@ -23,6 +23,10 @@ use flux_core::{ClassRegistry, Color, Value, prop, prop_t};
 
 static INIT: Once = Once::new();
 
+// The runtime-plugin entry point: version-check, adopt the host's registries,
+// then run the same install() the static build uses.
+flux_plugin::flux_plugin_main!(install);
+
 /// Install the plugin: register its classes, components, systems, Lua API,
 /// rendering and asset types with the engine. Idempotent, so it's safe for the
 /// app and each test to call. **Must run before any world is created**, so the

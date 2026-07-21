@@ -3,6 +3,15 @@ name = "flux_script"
 version = "0.1.0"
 edition = "2024"
 
+# Rust dylib (not cdylib): the ONE shared module containing mlua/Luau (and,
+# via unification, flux_core). The host executables and every plugin cdylib
+# link it dynamically, so the Lua runtime's internal state (userdata tags,
+# registries) exists exactly once per process — two statically-linked copies
+# corrupt the shared lua_State at GC time. Requires `-C prefer-dynamic`
+# (see .cargo/config.toml).
+[lib]
+crate-type = ["dylib"]
+
 [dependencies]
 flux_core.workspace = true
 flux_data.workspace = true

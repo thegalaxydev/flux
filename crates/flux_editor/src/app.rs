@@ -13,6 +13,33 @@ use crate::textures::TextureCache;
 #[derive(Clone)]
 pub struct AssetDrag(pub String);
 
+/// Prepare a scene's project plugins before its world exists.
+///
+/// `Ok(true)` — plugins ready, proceed to load. `Ok(false)` — this process
+/// already locked the class registry without the needed plugins, so a fresh
+/// editor was spawned for the project and THIS one should close/skip.
+/// `Err` — the plugins could not be loaded at all.
+pub(crate) fn ensure_project_plugins(scene: &Path, ctx: &egui::Context) -> Result<bool, String> {
+    let root = scene.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    match flux_plugin::ensure_project(&root) {
+        flux_plugin::Ensure::Ready(_) => Ok(true),
+        flux_plugin::Ensure::NeedsRestart(missing) => {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            std::process::Command::new(exe)
+                .arg(scene)
+                .spawn()
+                .map_err(|e| format!("relaunch failed: {e}"))?;
+            eprintln!(
+                "Restarting the editor to load project plugins: {}",
+                missing.join(", ")
+            );
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            Ok(false)
+        }
+        flux_plugin::Ensure::Error(e) => Err(e),
+    }
+}
+
 pub struct Pending {
     pub cmd: Command,
     pub merge: bool,
@@ -524,6 +551,14 @@ impl EditorApp {
                 else {
                     return;
                 };
+                match ensure_project_plugins(&path, ctx) {
+                    Ok(true) => {}
+                    Ok(false) => return, // relaunching with the right plugins
+                    Err(e) => {
+                        self.ui.status = format!("Open failed: {e}");
+                        return;
+                    }
+                }
                 match std::fs::read_to_string(&path)
                     .map_err(|e| e.to_string())
                     .and_then(|s| World::from_json(&s).map_err(|e| e.to_string()))
@@ -553,6 +588,8 @@ impl EditorApp {
     }
 
     fn replace_world(&mut self, world: World, path: Option<PathBuf>) {
+        // (Plugin preparation happens in `ensure_project_plugins` before the
+        // scene JSON is parsed — see FileOp::Open and the launcher path.)
         self.play = None;
         self.world = world;
         self.path = path;

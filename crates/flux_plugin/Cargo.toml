@@ -1,0 +1,15 @@
+[package]
+name = "flux_plugin"
+version = "0.1.0"
+edition = "2024"
+description = "Runtime plugin loading for Flux: host API, project manifests, and the plugin entry macro"
+
+[dependencies]
+flux_core.workspace = true
+flux_script.workspace = true
+flux_runtime.workspace = true
+flux_view.workspace = true
+flux_render.workspace = true
+libloading = "0.8"
+serde = { workspace = true }
+serde_json = { workspace = true }

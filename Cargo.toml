@@ -1,10 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "plugins/*"]
 
 [workspace.dependencies]
 flux_core = { path = "crates/flux_core" }
-flux_game = { path = "crates/flux_game" }
+flux_game = { path = "plugins/flux_game" }
+flux_plugin = { path = "crates/flux_plugin" }
 flux_render = { path = "crates/flux_render" }
 flux_script = { path = "crates/flux_script" }
 flux_runtime = { path = "crates/flux_runtime" }

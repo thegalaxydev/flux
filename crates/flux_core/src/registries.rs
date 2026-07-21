@@ -49,3 +49,10 @@ pub fn share() -> &'static CoreRegistries {
 pub fn adopt(shared: &'static CoreRegistries) {
     let _ = SHARED.set(shared);
 }
+
+/// Whether the class registry has already been initialized (installed OR
+/// lazily defaulted). Once true, later plugin installs are ignored — the
+/// process must restart to change the class set.
+pub fn class_installed() -> bool {
+    SHARED.get().is_some_and(|r| r.class.get().is_some())
+}

@@ -26,8 +26,6 @@ use app::EditorApp;
 use launcher::{LaunchAction, Launcher, Recents};
 
 fn main() -> eframe::Result {
-    // Install the reactor-game plugin before any world is created.
-    flux_game::install();
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--write-demo") {
         let path = args
@@ -44,6 +42,15 @@ fn main() -> eframe::Result {
         return Ok(());
     }
 
+    // A scene path argument (also used by plugin-driven relaunches) opens that
+    // project directly — its plugins load before any world exists.
+    let startup_scene = args
+        .iter()
+        .skip(1)
+        .find(|a| !a.starts_with("--"))
+        .map(PathBuf::from)
+        .filter(|p| p.is_file());
+
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 720.0])
         .with_title("Flux Editor");
@@ -57,7 +64,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Flux",
         options,
-        Box::new(|_cc| Ok(Box::new(FluxApp::new()))),
+        Box::new(move |_cc| Ok(Box::new(FluxApp::new(startup_scene)))),
     )
 }
 
@@ -70,16 +77,19 @@ struct FluxApp {
     icons: Icons,
     /// Last known editor project path, so in-editor Open/Save-As update recents.
     tracked: Option<PathBuf>,
+    /// A scene to open on the first frame (CLI arg / plugin relaunch).
+    pending_open: Option<PathBuf>,
 }
 
 impl FluxApp {
-    fn new() -> Self {
+    fn new(startup_scene: Option<PathBuf>) -> Self {
         FluxApp {
             editor: None,
             launcher: Launcher::default(),
             recents: Recents::load(),
             icons: Icons::lucide(),
             tracked: None,
+            pending_open: startup_scene,
         }
     }
 
@@ -92,7 +102,16 @@ impl FluxApp {
         self.editor = Some(EditorApp::new(world, path));
     }
 
-    fn open_path(&mut self, path: PathBuf) {
+    fn open_path(&mut self, ctx: &egui::Context, path: PathBuf) {
+        // Project plugins must load before the scene's world is parsed.
+        match app::ensure_project_plugins(&path, ctx) {
+            Ok(true) => {}
+            Ok(false) => return, // relaunched with the right plugins
+            Err(e) => {
+                self.launcher.error = Some(format!("Couldn't open {}: {e}", path.display()));
+                return;
+            }
+        }
         match std::fs::read_to_string(&path)
             .map_err(|e| e.to_string())
             .and_then(|s| World::from_json(&s).map_err(|e| e.to_string()))
@@ -108,6 +127,10 @@ impl FluxApp {
 impl eframe::App for FluxApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.icons.sync_theme_from(&ctx.style().visuals);
+
+        if let Some(path) = self.pending_open.take() {
+            self.open_path(ctx, path);
+        }
 
         if let Some(editor) = self.editor.as_mut() {
             eframe::App::update(editor, ctx, frame);
@@ -129,7 +152,7 @@ impl eframe::App for FluxApp {
         } else {
             match self.launcher.ui(ctx, &self.icons, &self.recents) {
                 Some(LaunchAction::NewScene) => self.enter(World::new(), None),
-                Some(LaunchAction::Open(path)) => self.open_path(path),
+                Some(LaunchAction::Open(path)) => self.open_path(ctx, path),
                 None => {}
             }
         }

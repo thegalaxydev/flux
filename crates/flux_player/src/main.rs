@@ -146,9 +146,6 @@ fn collect_input(ctx: &egui::Context, rect: egui::Rect) -> InputFrame {
 }
 
 fn main() -> eframe::Result {
-    // Install the reactor-game plugin (classes, systems, Lua API, …) before any
-    // world is created.
-    flux_game::install();
     let mut scene = None;
     let mut shot_out: Option<PathBuf> = None;
     let mut shot_frames = 90u32;
@@ -166,6 +163,24 @@ fn main() -> eframe::Result {
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+
+    // Load the project's plugins (project.json) BEFORE any world exists —
+    // the class registry locks to builtins on first touch otherwise.
+    match flux_plugin::ensure_project(&root) {
+        flux_plugin::Ensure::Ready(loaded) => {
+            if !loaded.is_empty() {
+                eprintln!("[Info] plugins loaded: {}", loaded.join(", "));
+            }
+        }
+        flux_plugin::Ensure::NeedsRestart(missing) => {
+            eprintln!("Flux Player: plugins required before startup: {}", missing.join(", "));
+            std::process::exit(1);
+        }
+        flux_plugin::Ensure::Error(e) => {
+            eprintln!("Flux Player: plugin load failed: {e}");
+            std::process::exit(1);
+        }
+    }
 
     let json = match std::fs::read_to_string(&path) {
         Ok(json) => json,
