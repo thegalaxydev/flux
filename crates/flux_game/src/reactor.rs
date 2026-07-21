@@ -74,16 +74,58 @@ pub fn step(world: &mut World, buildings: &mut BuildingCatalogCache, root: &Path
             .filter(|&c| world.class_name(c) == Some("Building"))
             .collect();
 
+        // Footprints for adjacency: cooling towers boost neighbouring reactors.
+        let foot = |world: &World, b: InstanceId| -> (i32, i32, i32, i32) {
+            let cell = match world.get_prop(b, "Cell") {
+                Some(Value::Vec2(v)) => *v,
+                _ => glam::Vec2::ZERO,
+            };
+            let fp = match world.get_prop(b, "Footprint") {
+                Some(Value::Vec2(v)) => *v,
+                _ => glam::Vec2::ONE,
+            };
+            (cell.x as i32, cell.y as i32, (fp.x as i32).max(1), (fp.y as i32).max(1))
+        };
+        let adjacent = |a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)| -> bool {
+            // (col, row, w, h): footprints touch when a's 1-tile-expanded rect
+            // overlaps b's rect.
+            a.0 - 1 < b.0 + b.2 && a.0 + a.2 + 1 > b.0 && a.1 - 1 < b.1 + b.3 && a.1 + a.3 + 1 > b.1
+        };
+        let towers: Vec<(InstanceId, (i32, i32, i32, i32), f32)> = ids
+            .iter()
+            .filter_map(|&b| {
+                let def = cat.get(&text(world, b, "Type"))?;
+                (def.cooling > 0.0).then(|| (b, foot(world, b), def.cooling))
+            })
+            .collect();
+
         let mut produced = 0.0;
         let mut consumed = 0.0;
-        for b in ids {
+        let mut hot_towers: Vec<InstanceId> = Vec::new();
+        for b in ids.clone() {
             let Some(def) = cat.get(&text(world, b, "Type")) else {
                 continue;
             };
             consumed += def.power_use;
             if let Some(rp) = &def.reactor {
-                produced += simulate(world, b, rp, dt);
+                let rf = foot(world, b);
+                let boost: f32 = towers
+                    .iter()
+                    .filter(|(t, tf, _)| *t != b && adjacent(*tf, rf))
+                    .map(|(_, _, c)| *c)
+                    .sum();
+                produced += simulate(world, b, rp, boost, dt);
+                if num(world, b, "Temperature") > 60.0 {
+                    hot_towers.extend(
+                        towers.iter().filter(|(t, tf, _)| *t != b && adjacent(*tf, rf)).map(|(t, _, _)| *t),
+                    );
+                }
             }
+        }
+        // Cooling towers vent steam while they're actually shedding heat.
+        for (t, _, _) in &towers {
+            let state = if hot_towers.contains(t) { "working" } else { "idle" };
+            crate::factory::apply_state(world, *t, state);
         }
         set(world, tm, "_PowerProduced", produced);
         set(world, tm, "_PowerConsumed", consumed);
@@ -91,7 +133,8 @@ pub fn step(world: &mut World, buildings: &mut BuildingCatalogCache, root: &Path
 }
 
 /// Advance one reactor; returns the power it generated (0 after meltdown).
-fn simulate(world: &mut World, b: InstanceId, rp: &ReactorParams, dt: f32) -> f32 {
+/// `cooling_boost` is the summed coefficient from adjacent cooling towers.
+fn simulate(world: &mut World, b: InstanceId, rp: &ReactorParams, cooling_boost: f32, dt: f32) -> f32 {
     let mut temp = num(world, b, "Temperature");
     let mut fuel = num(world, b, "Fuel");
     let mut integrity = num(world, b, "Integrity");
@@ -112,7 +155,7 @@ fn simulate(world: &mut World, b: InstanceId, rp: &ReactorParams, dt: f32) -> f3
     fuel = (fuel - reactivity * rp.burn * dt).max(0.0);
 
     let heat_in = reactivity * rp.heat * dt;
-    let cooling = rp.cooling * (temp - AMBIENT) * dt;
+    let cooling = (rp.cooling + cooling_boost) * (temp - AMBIENT) * dt;
     temp = (temp + heat_in - cooling).max(AMBIENT);
 
     if temp > rp.meltdown {
@@ -129,6 +172,18 @@ fn simulate(world: &mut World, b: InstanceId, rp: &ReactorParams, dt: f32) -> f3
     set(world, b, "Fuel", fuel);
     set(world, b, "Integrity", integrity);
     set(world, b, "PowerOutput", power);
+
+    // Visible reactor state -> sprite clip (off/running/hot/meltdown).
+    let state = if integrity <= 0.0 {
+        "meltdown"
+    } else if temp > rp.optimal * 1.2 {
+        "hot"
+    } else if power > 0.5 {
+        "running"
+    } else {
+        "off"
+    };
+    crate::factory::apply_state(world, b, state);
     power
 }
 
@@ -158,7 +213,7 @@ mod tests {
 
     fn run(world: &mut World, cat: &Rc<BuildingCatalog>, r: InstanceId, dt: f32) {
         let rp = cat.get("reactor").unwrap().reactor.as_ref().unwrap();
-        simulate(world, r, rp, dt);
+        simulate(world, r, rp, 0.0, dt);
     }
 
     #[test]
@@ -209,6 +264,44 @@ mod tests {
         }
         assert_eq!(num(&w, r, "Integrity"), 0.0);
         assert_eq!(num(&w, r, "PowerOutput"), 0.0);
+    }
+
+    #[test]
+    fn cooling_tower_boosts_reactor_and_steams() {
+        crate::install();
+        let catalog = r#"{ "buildings": [
+            { "id": "reactor", "size": [2,2], "sprite": "art/r.frames.json",
+              "reactor": { "power": 100, "heat": 400, "cooling": 0.1, "burn": 0.0,
+                           "meltdown": 2000, "optimal": 350 } },
+            { "id": "cooling", "size": [2,2], "cooling": 1.2, "sprite": "art/c.frames.json" }
+        ]}"#;
+        let dir = std::env::temp_dir().join("flux_game_cooling_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("b.buildings.json"), catalog).unwrap();
+
+        let mut w = World::new();
+        let tm = w.create("Tilemap", w.workspace()).unwrap();
+        w.set_prop(tm, "MapWidth", Value::Number(16.0)).unwrap();
+        w.set_prop(tm, "MapHeight", Value::Number(16.0)).unwrap();
+        w.set_prop(tm, "Buildings", Value::Asset("b.buildings.json".into())).unwrap();
+        let cat = Rc::new(BuildingCatalog::parse(catalog).unwrap());
+        let r = crate::building::place(&mut w, tm, cat.get("reactor").unwrap(), 2, 2).unwrap();
+        let t = crate::building::place(&mut w, tm, cat.get("cooling").unwrap(), 4, 2).unwrap();
+        w.set_prop(r, "Fuel", Value::Number(100.0)).unwrap();
+        w.set_prop(r, "ControlRods", Value::Number(0.0)).unwrap();
+
+        let mut cache = BuildingCatalogCache::default();
+        for _ in 0..300 {
+            step(&mut w, &mut cache, &dir, 0.1);
+        }
+        // The tower sheds heat: equilibrium far below the uncooled ~3000 C.
+        let temp = num(&w, r, "Temperature");
+        assert!(temp < 400.0, "boosted cooling should tame the reactor: {temp}");
+        // Both publish visible states, and their sprites follow.
+        assert_eq!(text(&w, r, "_State"), "running");
+        assert_eq!(text(&w, t, "_State"), "working");
+        let sprite = crate::building::sprite_of(&w, t).expect("tower sprite");
+        assert_eq!(text(&w, sprite, "Animation"), "working");
     }
 
     #[test]

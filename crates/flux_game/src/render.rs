@@ -1,11 +1,16 @@
-//! The game's overlay renderer: draws `Building` footprints on the tilemap.
-//! Registered with `flux_view::register_overlay`, so the engine stays ignorant
-//! of the `Building` node type.
+//! The game's overlay renderer, registered with `flux_view::register_overlay`.
+//!
+//! Sprited buildings are drawn by the engine (their child `AnimatedSprite`);
+//! here we add only a subtle ground-footprint outline under each building,
+//! the flat-diamond fallback for buildings *without* sprite art, and the
+//! item-flow pips that make logistics visible.
 
-use egui::{Align2, Color32, FontId, Painter, Pos2, Shape, Stroke};
+use egui::{Color32, Painter, Pos2, Shape, Stroke};
 
 use flux_core::{Color, InstanceId, Value, World};
 use flux_view::{RenderCtx, to_color};
+
+use crate::factory::FlowLog;
 
 fn numf(world: &World, id: InstanceId, name: &str, default: f32) -> f32 {
     match world.get_prop(id, name) {
@@ -20,6 +25,25 @@ fn screen_aabb(pts: &[Pos2]) -> egui::Rect {
         r.extend_with(*p);
     }
     r
+}
+
+/// Stable per-item pip colour, so ore streams are recognizable at a glance.
+fn item_color(item: &str) -> Color32 {
+    match item {
+        "iron" => Color32::from_rgb(196, 134, 106),
+        "coal" => Color32::from_rgb(60, 60, 68),
+        "copper" => Color32::from_rgb(204, 122, 58),
+        "uranium" => Color32::from_rgb(110, 218, 90),
+        "iron_plate" => Color32::from_rgb(190, 196, 206),
+        _ => {
+            let h: u32 = item.bytes().fold(5381u32, |a, b| a.wrapping_mul(33) ^ b as u32);
+            Color32::from_rgb(
+                120 + (h % 100) as u8,
+                120 + ((h >> 8) % 100) as u8,
+                120 + ((h >> 16) % 100) as u8,
+            )
+        }
+    }
 }
 
 pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
@@ -72,37 +96,39 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
             if !ctx.rect.intersects(aabb) {
                 continue;
             }
-            let color = match world.get_prop(bid, "Color") {
-                Some(Value::Color(c)) => *c,
-                _ => Color::WHITE,
-            };
-            let outline = Color {
-                r: color.r * 0.55,
-                g: color.g * 0.55,
-                b: color.b * 0.55,
-                a: color.a,
-            };
-            painter.add(Shape::convex_polygon(
-                quad,
-                to_color(&color),
-                Stroke::new(1.5, to_color(&outline)),
-            ));
 
-            // Label the building with its name, once it's big enough to read.
-            if aabb.height() > 22.0 {
-                if let Some(name) = world.name(bid).filter(|n| !n.is_empty()) {
-                    let size = (aabb.height() * 0.26).clamp(9.0, 15.0);
-                    let font = FontId::proportional(size);
-                    let c = aabb.center();
-                    painter.text(
-                        c + egui::vec2(1.0, 1.0),
-                        Align2::CENTER_CENTER,
-                        name,
-                        font.clone(),
-                        Color32::from_black_alpha(170),
-                    );
-                    painter.text(c, Align2::CENTER_CENTER, name, font, Color32::WHITE);
+            if crate::building::sprite_of(world, bid).is_some() {
+                // The engine draws the animated sprite; just ground it with a
+                // faint footprint outline.
+                painter.add(Shape::closed_line(quad, Stroke::new(1.0, Color32::from_black_alpha(70))));
+            } else {
+                // No art: legacy flat diamond in the catalog colour.
+                let color = match world.get_prop(bid, "Color") {
+                    Some(Value::Color(c)) => *c,
+                    _ => Color::WHITE,
+                };
+                let outline = Color {
+                    r: color.r * 0.55,
+                    g: color.g * 0.55,
+                    b: color.b * 0.55,
+                    a: color.a,
+                };
+                painter.add(Shape::convex_polygon(quad, to_color(&color), Stroke::new(1.5, to_color(&outline))));
+            }
+        }
+
+        // Item-flow pips: each recent hop animates from source to destination.
+        if let Some(log) = world.component::<FlowLog>(tm) {
+            for e in &log.events {
+                let t = (e.age / 0.6).clamp(0.0, 1.0);
+                let p = e.from + (e.to - e.from) * t;
+                let s = ctx.to_screen(p) + egui::vec2(0.0, -6.0 * ctx.camera.zoom);
+                if !ctx.rect.contains(s) {
+                    continue;
                 }
+                let r = (3.5 * ctx.camera.zoom).clamp(1.5, 5.0);
+                painter.circle_filled(s, r, item_color(&e.item));
+                painter.circle_stroke(s, r, Stroke::new(1.0, Color32::from_black_alpha(120)));
             }
         }
     }

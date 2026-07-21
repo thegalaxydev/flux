@@ -50,9 +50,23 @@ pub struct BuildingDoc {
     pub stores: bool,
     #[serde(default)]
     pub power_use: f32,
+    /// Extra cooling coefficient this building lends to edge-adjacent reactors
+    /// (cooling towers). 0 = none.
+    #[serde(default)]
+    pub cooling: f32,
     /// Money cost to place this building (enforced by the game, not the engine).
     #[serde(default)]
     pub cost: f32,
+    /// Animated sprite art: path to a `*.frames.json` with `idle`/`working`/
+    /// `starved` clips (reactors also `off`/`running`/`hot`/`meltdown`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprite: Option<String>,
+    /// Frame size in pixels (world units at zoom 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprite_size: Option<[f32; 2]>,
+    /// Normalized pivot: where the footprint's ground centre sits in the frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprite_pivot: Option<[f32; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reactor: Option<ReactorDoc>,
 }
@@ -135,8 +149,18 @@ pub struct BuildingDef {
     pub capacity: u32,
     pub stores: bool,
     pub power_use: f32,
+    pub cooling: f32,
     pub cost: f32,
+    pub sprite: Option<SpriteArt>,
     pub reactor: Option<ReactorParams>,
+}
+
+/// Animated-sprite art for a building type.
+#[derive(Clone)]
+pub struct SpriteArt {
+    pub frames: String,
+    pub size: Vec2,
+    pub pivot: Vec2,
 }
 
 #[derive(Clone)]
@@ -182,7 +206,13 @@ impl BuildingCatalog {
                     capacity: b.capacity,
                     stores: b.stores,
                     power_use: b.power_use.max(0.0),
+                    cooling: b.cooling.max(0.0),
                     cost: b.cost.max(0.0),
+                    sprite: b.sprite.as_ref().map(|frames| SpriteArt {
+                        frames: frames.clone(),
+                        size: b.sprite_size.map(|s| Vec2::new(s[0], s[1])).unwrap_or(Vec2::new(64.0, 64.0)),
+                        pivot: b.sprite_pivot.map(|p| Vec2::new(p[0], p[1])).unwrap_or(Vec2::new(0.5, 0.5)),
+                    }),
                     reactor: b.reactor.as_ref().map(|r| ReactorParams {
                         power: r.power.max(0.0),
                         heat: r.heat.max(0.0),
@@ -343,7 +373,51 @@ pub fn place(
     let _ = world.set_prop(id, "Color", Value::Color(def.color));
     let _ = world.set_prop(id, "Recipe", Value::String(def.recipe.clone().unwrap_or_default()));
     world.set_component::<Inventory>(id, Inventory::new(def.capacity));
+    if def.sprite.is_some() {
+        attach_sprite(world, tilemap, id, def, col, row);
+    }
     Some(id)
+}
+
+/// Create the building's child `AnimatedSprite`, positioned so its authored
+/// pivot lands on the footprint's ground-diamond centre. Sprites don't inherit
+/// parent transforms, so the position is absolute (buildings never move).
+fn attach_sprite(world: &mut World, tilemap: InstanceId, b: InstanceId, def: &BuildingDef, col: i32, row: i32) {
+    let Some(art) = &def.sprite else { return };
+    let map_pos = match world.get_prop(tilemap, "Position") {
+        Some(Value::Vec2(p)) => *p,
+        _ => Vec2::ZERO,
+    };
+    let numf = |name: &str, d: f32| match world.get_prop(tilemap, name) {
+        Some(Value::Number(n)) => *n as f32,
+        _ => d,
+    };
+    let (tw, th) = (numf("TileWidth", 64.0), numf("TileHeight", 32.0));
+    // Footprint centre in fractional tile coords -> world (tile_to_world is
+    // linear, so the formula holds for fractional cells).
+    let cf = col as f32 + (def.width as f32 - 1.0) * 0.5;
+    let rf = row as f32 + (def.height as f32 - 1.0) * 0.5;
+    let centre = Vec2::new((cf - rf) * tw * 0.5, (cf + rf) * th * 0.5);
+
+    let Ok(sprite) = world.create("AnimatedSprite", b) else { return };
+    let _ = world.set_name(sprite, "Sprite");
+    let _ = world.set_prop(sprite, "Frames", Value::Asset(art.frames.clone()));
+    let _ = world.set_prop(sprite, "Animation", Value::String("idle".into()));
+    let _ = world.set_prop(sprite, "AutoPlay", Value::Bool(true));
+    let _ = world.set_prop(sprite, "Size", Value::Vec2(art.size));
+    let _ = world.set_prop(sprite, "Pivot", Value::Vec2(art.pivot));
+    let _ = world.set_prop(sprite, "Position", Value::Vec2(map_pos + centre));
+    // Iso depth: farther rows draw first; tilemaps sit at ZIndex 0.
+    let _ = world.set_prop(sprite, "ZIndex", Value::Number(10.0 + (col + row) as f64));
+}
+
+/// The building's child `AnimatedSprite`, if it has one.
+pub fn sprite_of(world: &World, b: InstanceId) -> Option<InstanceId> {
+    world
+        .children(b)
+        .iter()
+        .copied()
+        .find(|&c| world.class_name(c) == Some("AnimatedSprite"))
 }
 
 /// Remove the building covering `(col, row)`. Returns whether one was removed.

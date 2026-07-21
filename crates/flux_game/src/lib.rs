@@ -69,6 +69,10 @@ fn install_classes() {
             prop_t("_Timer", Value::Number(0.0)),
             prop_t("_MineT", Value::Number(0.0)),
             prop_t("_Flow", Value::Number(0.0)),
+            // Visible sim status (idle/working/starved; reactors also
+            // off/running/hot/meltdown) — drives the child sprite's clip.
+            prop_t("_State", Value::String(String::new())),
+            prop_t("_StateHold", Value::Number(0.0)),
             prop("Temperature", Value::Number(20.0)),
             prop("Fuel", Value::Number(0.0)),
             prop("ControlRods", Value::Number(1.0)),

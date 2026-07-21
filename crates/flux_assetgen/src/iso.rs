@@ -170,6 +170,28 @@ pub fn lamp(c: &mut Canvas, x: f32, y: f32, color: Rgba, on: bool) {
     }
 }
 
+/// A big billowing steam column for cooling towers: large overlapping puffs
+/// rising from the rim, drifting with the wind. `phase` in 0..1 animates.
+pub fn plume(c: &mut Canvas, x: f32, y: f32, phase: f32, color: Rgba) {
+    for i in 0..5 {
+        let t = ((phase + i as f32 * 0.2) % 1.0).max(0.02);
+        let py = y - t * 58.0;
+        let px = x + t * t * 14.0 + ((t * 7.0 + i as f32 * 1.7).sin()) * 4.0;
+        let r = 9.0 + t * 17.0;
+        let a = ((1.0 - t * 0.75) * 235.0) as u8;
+        c.fill_ellipse_fn(px, py, r, r * 0.82, |nx, ny| {
+            let d = (nx * nx + ny * ny).sqrt();
+            if d > 1.0 {
+                return crate::canvas::CLEAR;
+            }
+            // Bright core, soft edge, faint top-left highlight.
+            let body = ((1.0 - d * d) * a as f32) as u8;
+            let lit = 1.0 + 0.15 * (-(nx + ny)).clamp(0.0, 1.0);
+            crate::canvas::with_alpha(crate::canvas::shade(color, lit), body)
+        });
+    }
+}
+
 /// Rising smoke/steam puffs; `phase` in 0..1 scrolls them upward and fades.
 /// `scale` sizes the puffs to the sprite (1.0 suits a chimney, ~2+ a tower).
 pub fn puffs(c: &mut Canvas, x: f32, y: f32, phase: f32, color: Rgba, count: u32, rise: f32, scale: f32) {

@@ -204,7 +204,7 @@ fn reactor() -> BuildingArt {
 
 fn cooling_tower() -> BuildingArt {
     let (fw, fd) = (3.0, 3.0);
-    let fr = frame_for(fw, fd, 110.0);
+    let fr = frame_for(fw, fd, 160.0);
     let (gx, gy) = iso::proj(1.5, 1.5);
     let (cx, cy) = (fr.ox + gx, fr.oy + gy);
 
@@ -221,7 +221,7 @@ fn cooling_tower() -> BuildingArt {
             if d > 0.62 { with_alpha(CONCRETE_DARK, 0) } else { shade(WINDOW_DARK, 1.1) }
         });
         if let Some(p) = steam_phase {
-            puffs(&mut c, cx, cy - 94.0, p, STEAM, 5, 34.0, 2.2);
+            iso::plume(&mut c, cx, cy - 96.0, p, STEAM);
         }
         c.outline();
         c

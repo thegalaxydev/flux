@@ -307,11 +307,65 @@ pub fn step(
             .filter(|&c| world.class_name(c) == Some("Building"))
             .collect();
 
-        for &b in &ids {
-            mine(world, tm, b, &bcat, tileset.as_deref(), dt);
-            produce(world, b, &rcat, dt);
+        // Age out old flow-visualization events.
+        if let Some(log) = world.component_mut::<FlowLog>(tm) {
+            for e in &mut log.events {
+                e.age += dt;
+            }
+            log.events.retain(|e| e.age < 0.6);
         }
-        transport(world, &ids, &bcat, &rcat, dt);
+
+        for &b in &ids {
+            let mined = mine(world, tm, b, &bcat, tileset.as_deref(), dt);
+            let produced = produce(world, b, &rcat, dt);
+            resolve_state(world, b, &bcat, mined, produced, dt);
+        }
+        let moved = transport(world, tm, &ids, &bcat, &rcat, dt);
+        for b in moved {
+            // Flow keeps passive buildings (belts, storage) visibly working
+            // for a moment; `resolve_state` decays the hold.
+            set_num(world, b, "_StateHold", 0.9);
+            apply_state(world, b, "working");
+        }
+    }
+}
+
+/// Combine this frame's mine/produce verdicts (`None` = no decision, keep the
+/// current state) into the building's `_State`, and keep the sprite's clip in
+/// sync. Reactors are skipped — `ReactorSystem` owns their state machine.
+fn resolve_state(
+    world: &mut World,
+    b: InstanceId,
+    cat: &BuildingCatalog,
+    mined: Option<&'static str>,
+    produced: Option<&'static str>,
+    dt: f32,
+) {
+    let Some(def) = cat.get(&text(world, b, "Type")) else {
+        return;
+    };
+    // ReactorSystem owns reactor + cooling-tower states.
+    if def.reactor.is_some() || def.cooling > 0.0 {
+        return;
+    }
+    let hold = (num(world, b, "_StateHold") - dt).max(0.0);
+    set_num(world, b, "_StateHold", hold);
+
+    if let Some(state) = mined.or(produced) {
+        apply_state(world, b, state);
+    } else if !def.mines && def.recipe.is_none() && hold <= 0.0 {
+        apply_state(world, b, "idle");
+    }
+}
+
+/// Publish `_State` and switch the child sprite's animation clip on change.
+pub(crate) fn apply_state(world: &mut World, b: InstanceId, state: &str) {
+    if text(world, b, "_State") == state {
+        return;
+    }
+    let _ = world.set_prop(b, "_State", flux_core::Value::String(state.to_string()));
+    if let Some(sprite) = crate::building::sprite_of(world, b) {
+        flux_core::animation::play(world, sprite, state, false);
     }
 }
 
@@ -322,6 +376,8 @@ fn asset(world: &World, id: InstanceId, name: &str) -> String {
     }
 }
 
+/// Returns this tick's verdict (`working`/`starved`), or `None` between ticks
+/// (or for non-miners) so the previous state persists.
 fn mine(
     world: &mut World,
     tilemap: InstanceId,
@@ -329,32 +385,31 @@ fn mine(
     cat: &BuildingCatalog,
     tileset: Option<&TileSet>,
     dt: f32,
-) {
-    let Some(def) = cat.get(&text(world, b, "Type")) else {
-        return;
-    };
+) -> Option<&'static str> {
+    let def = cat.get(&text(world, b, "Type"))?;
     if !def.mines {
-        return;
+        return None;
     }
     let (n, acc) = ticks(num(world, b, "_MineT"), def.rate, dt);
     set_num(world, b, "_MineT", acc);
     if n == 0 {
-        return;
+        return None;
     }
     let (col, row) = cell(world, b);
+    // No deposit under the drill: starved.
     let Some(ore_idx) = world.tile_grid(tilemap).and_then(|g| {
         let c = g.cell(col, row)?;
         c.has_ore().then_some(c.ore)
     }) else {
-        return;
+        return Some("starved");
     };
     let Some(ore_id) = tileset.and_then(|ts| ts.tile(ore_idx).map(|t| t.id.clone())) else {
-        return;
+        return Some("starved");
     };
     let free = world.component::<Inventory>(b).map(|i| i.free()).unwrap_or(0);
     let want = n.min(free);
     if want == 0 {
-        return;
+        return Some("starved"); // output buffer full
     }
     let mined = world
         .tile_grid_mut(tilemap)
@@ -364,24 +419,26 @@ fn mine(
         if let Some(inv) = world.component_mut::<Inventory>(b) {
             inv.add(&ore_id, mined);
         }
+        Some("working")
+    } else {
+        Some("starved") // deposit exhausted
     }
 }
 
-fn produce(world: &mut World, b: InstanceId, recipes: &RecipeCatalog, dt: f32) {
+/// Returns the producer's verdict, or `None` for buildings without a recipe.
+fn produce(world: &mut World, b: InstanceId, recipes: &RecipeCatalog, dt: f32) -> Option<&'static str> {
     let recipe_id = text(world, b, "Recipe");
     if recipe_id.is_empty() {
-        return;
+        return None;
     }
-    let Some(recipe) = recipes.get(&recipe_id) else {
-        return;
-    };
+    let recipe = recipes.get(&recipe_id)?;
 
     let timer = num(world, b, "_Timer");
     if timer > 0.0 {
         let t = timer - dt;
         if t > 0.0 {
             set_num(world, b, "_Timer", t);
-            return;
+            return Some("working");
         }
         set_num(world, b, "_Timer", 0.0);
         if let Some(inv) = world.component_mut::<Inventory>(b) {
@@ -389,17 +446,15 @@ fn produce(world: &mut World, b: InstanceId, recipes: &RecipeCatalog, dt: f32) {
                 inv.add(item, *count);
             }
         }
-        return;
+        return Some("working");
     }
 
-    let Some(inv) = world.component::<Inventory>(b) else {
-        return;
-    };
+    let inv = world.component::<Inventory>(b)?;
     let inputs_ready = recipe.inputs.iter().all(|(i, c)| inv.has(i, *c));
     let out_total: u32 = recipe.outputs.iter().map(|(_, c)| c).sum();
     let in_total: u32 = recipe.inputs.iter().map(|(_, c)| c).sum();
     if !inputs_ready || inv.free() + in_total < out_total {
-        return;
+        return Some("starved"); // missing inputs, or output blocked
     }
     if let Some(inv) = world.component_mut::<Inventory>(b) {
         for (item, count) in &recipe.inputs {
@@ -407,15 +462,52 @@ fn produce(world: &mut World, b: InstanceId, recipes: &RecipeCatalog, dt: f32) {
         }
     }
     set_num(world, b, "_Timer", recipe.time);
+    Some("working")
 }
 
+/// A recent item hop between two buildings, for the flow-visualization
+/// overlay. Positions are absolute world-space footprint centres.
+pub struct FlowEvent {
+    pub from: glam::Vec2,
+    pub to: glam::Vec2,
+    pub item: String,
+    pub age: f32,
+}
+
+/// Transient per-tilemap log of recent hops (never saved: not registered with
+/// the component save hook).
+#[derive(Default)]
+pub struct FlowLog {
+    pub events: Vec<FlowEvent>,
+}
+
+/// Absolute world-space centre of a building's footprint on its tilemap.
+fn world_centre(world: &World, tilemap: InstanceId, b: InstanceId) -> glam::Vec2 {
+    let map_pos = match world.get_prop(tilemap, "Position") {
+        Some(Value::Vec2(p)) => *p,
+        _ => glam::Vec2::ZERO,
+    };
+    let dim = |name, d| match world.get_prop(tilemap, name) {
+        Some(Value::Number(n)) => *n as f32,
+        _ => d,
+    };
+    let (tw, th) = (dim("TileWidth", 64.0), dim("TileHeight", 32.0));
+    let (c, r) = cell(world, b);
+    let (w, h) = footprint(world, b);
+    let cf = c as f32 + (w as f32 - 1.0) * 0.5;
+    let rf = r as f32 + (h as f32 - 1.0) * 0.5;
+    map_pos + glam::Vec2::new((cf - rf) * tw * 0.5, (cf + rf) * th * 0.5)
+}
+
+/// Returns every building that sent or received an item this frame.
 fn transport(
     world: &mut World,
+    tilemap: InstanceId,
     ids: &[InstanceId],
     cat: &BuildingCatalog,
     recipes: &RecipeCatalog,
     dt: f32,
-) {
+) -> Vec<InstanceId> {
     let mut occupancy: HashMap<(i32, i32), InstanceId> = HashMap::new();
     for &b in ids {
         let (c, r) = cell(world, b);
@@ -477,6 +569,7 @@ fn transport(
         }
     }
 
+    let mut movers = Vec::new();
     for (from, to, item, n) in moves {
         let taken = world.component_mut::<Inventory>(from).map(|i| i.take(&item, n)).unwrap_or(0);
         if taken > 0 {
@@ -486,8 +579,20 @@ fn transport(
                     inv.add(&item, taken - added);
                 }
             }
+            if added > 0 {
+                movers.push(from);
+                movers.push(to);
+                let (fp, tp) = (world_centre(world, tilemap, from), world_centre(world, tilemap, to));
+                if world.component::<FlowLog>(tilemap).is_none() {
+                    world.set_component::<FlowLog>(tilemap, FlowLog::default());
+                }
+                if let Some(log) = world.component_mut::<FlowLog>(tilemap) {
+                    log.events.push(FlowEvent { from: fp, to: tp, item, age: 0.0 });
+                }
+            }
         }
     }
+    movers
 }
 
 fn edge_neighbours(
