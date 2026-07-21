@@ -18,6 +18,8 @@ struct SubtreeNode {
     class: ClassId,
     name: String,
     props: IndexMap<&'static str, Value>,
+    attributes: IndexMap<String, Value>,
+    tags: Vec<String>,
     parent_slot: Option<usize>,
 }
 
@@ -61,6 +63,8 @@ impl World {
                 class: self.class_of(cur).unwrap(),
                 name: self.name(cur).unwrap().to_string(),
                 props: self.props(cur).map(|(k, v)| (k, v.clone())).collect(),
+                attributes: self.attributes(cur).map(|(k, v)| (k.to_string(), v.clone())).collect(),
+                tags: self.tags(cur).map(str::to_string).collect(),
                 parent_slot,
             });
         }
@@ -126,6 +130,12 @@ impl World {
             self.set_name_raw(nid, node.name.clone());
             for (k, v) in &node.props {
                 self.set_prop(nid, k, v.clone())?;
+            }
+            for (k, v) in &node.attributes {
+                self.set_attribute(nid, k, Some(v.clone()))?;
+            }
+            for tag in &node.tags {
+                self.add_tag(nid, tag);
             }
             map.insert(node.old_id, nid);
             new_ids.push(nid);

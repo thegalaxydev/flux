@@ -53,6 +53,11 @@ pub struct UiState {
     /// A Script/Module without a backing file whose source should be generated;
     /// drained into a save-file dialog on the next frame.
     pub create_source: Option<InstanceId>,
+    /// New-attribute entry buffers in the properties panel.
+    pub attr_new_name: String,
+    pub attr_new_ty: usize,
+    /// New-tag entry buffer in the properties panel.
+    pub tag_new: String,
     /// An asset being renamed in the Assets panel: `(relative path, edit buffer)`.
     pub asset_rename: Option<(String, String)>,
     /// An asset pending delete confirmation (relative path).
@@ -82,6 +87,9 @@ impl Default for UiState {
             open_script: None,
             open_animation: None,
             create_source: None,
+            attr_new_name: String::new(),
+            attr_new_ty: 0,
+            tag_new: String::new(),
             asset_rename: None,
             asset_delete: None,
         }

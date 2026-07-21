@@ -16,6 +16,10 @@ pub enum CoreError {
     WouldCreateCycle,
     #[error("unknown property '{0}'")]
     UnknownProperty(String),
+    #[error("attributes cannot hold instance references")]
+    AttributeNotData,
+    #[error("attribute names must be non-empty")]
+    BadAttributeName,
     #[error("type mismatch for '{prop}': expected {expected:?}, got {got:?}")]
     TypeMismatch {
         prop: String,

@@ -54,6 +54,21 @@ pub enum Command {
         old_parent: InstanceId,
         old_index: usize,
     },
+    /// Set (`Some`) or remove (`None`) a free-form attribute.
+    SetAttribute {
+        id: InstanceId,
+        name: String,
+        old: Option<Value>,
+        new: Option<Value>,
+    },
+    AddTag {
+        id: InstanceId,
+        tag: String,
+    },
+    RemoveTag {
+        id: InstanceId,
+        tag: String,
+    },
 }
 
 impl Command {
@@ -110,6 +125,10 @@ impl Command {
             subtree: world.snapshot_subtree(id)?,
             created: None,
         })
+    }
+
+    pub fn set_attribute(id: InstanceId, name: String, old: Option<Value>, new: Option<Value>) -> Self {
+        Command::SetAttribute { id, name, old, new }
     }
 
     pub fn reparent_at(id: InstanceId, new_parent: InstanceId, index: usize) -> Self {
@@ -202,6 +221,18 @@ impl Command {
                 }
                 Ok(None)
             }
+            Command::SetAttribute { id, name, new, .. } => {
+                w.set_attribute(*id, name, new.clone())?;
+                Ok(None)
+            }
+            Command::AddTag { id, tag } => {
+                w.add_tag(*id, tag);
+                Ok(None)
+            }
+            Command::RemoveTag { id, tag } => {
+                w.remove_tag(*id, tag);
+                Ok(None)
+            }
         }
     }
 
@@ -251,6 +282,18 @@ impl Command {
                 ..
             } => {
                 w.reparent_at(*id, *old_parent, *old_index)?;
+                Ok(None)
+            }
+            Command::SetAttribute { id, name, old, .. } => {
+                w.set_attribute(*id, name, old.clone())?;
+                Ok(None)
+            }
+            Command::AddTag { id, tag } => {
+                w.remove_tag(*id, tag);
+                Ok(None)
+            }
+            Command::RemoveTag { id, tag } => {
+                w.add_tag(*id, tag);
                 Ok(None)
             }
         }
@@ -339,6 +382,8 @@ impl Command {
                 fix(new_parent);
                 fix(old_parent);
             }
+            Command::SetAttribute { id, .. } => fix(id),
+            Command::AddTag { id, .. } | Command::RemoveTag { id, .. } => fix(id),
         }
     }
 
@@ -381,6 +426,18 @@ impl Command {
                     id: id2, new: new2, ..
                 },
             ) if id == id2 => {
+                *new = new2.clone();
+                true
+            }
+            (
+                Command::SetAttribute { id, name, new, .. },
+                Command::SetAttribute {
+                    id: id2,
+                    name: name2,
+                    new: new2,
+                    ..
+                },
+            ) if id == id2 && name == name2 => {
                 *new = new2.clone();
                 true
             }

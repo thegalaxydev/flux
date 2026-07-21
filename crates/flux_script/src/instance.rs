@@ -164,6 +164,9 @@ impl UserData for LuaInstance {
             if name == "SaveService" {
                 return crate::save::LuaSaveService.into_lua(lua);
             }
+            if name == "CollectionService" {
+                return LuaCollectionService.into_lua(lua);
+            }
             // Plugin-registered services (e.g. a game's own service).
             if let Some(result) = crate::lookup_service(lua, &name) {
                 return result;
@@ -174,6 +177,68 @@ impl UserData for LuaInstance {
                     "'{name}' is not a valid service"
                 ))),
             }
+        });
+        // ---- attributes + tags (Roblox-style) -------------------------------
+        m.add_method("SetAttribute", |lua, this, (name, value): (String, LuaValue)| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            let value = match &value {
+                LuaValue::Nil => None,
+                v => Some(infer_value(v).ok_or_else(|| {
+                    mlua::Error::RuntimeError(format!(
+                        "SetAttribute: unsupported value type '{}' (attributes hold plain data)",
+                        v.type_name()
+                    ))
+                })?),
+            };
+            w.set_attribute(this.0, &name, value)
+                .map_err(|e| mlua::Error::RuntimeError(e.to_string()))
+        });
+        m.add_method("GetAttribute", |lua, this, name: String| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            match w.attribute(this.0, &name) {
+                Some(v) => value_to_lua(lua, &w, v),
+                None => Ok(LuaValue::Nil),
+            }
+        });
+        m.add_method("GetAttributes", |lua, this, ()| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            let table = lua.create_table()?;
+            for (name, v) in w.attributes(this.0) {
+                table.set(name, value_to_lua(lua, &w, v)?)?;
+            }
+            Ok(table)
+        });
+        m.add_method("AddTag", |lua, this, tag: String| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            w.add_tag(this.0, &tag);
+            Ok(())
+        });
+        m.add_method("RemoveTag", |lua, this, tag: String| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            w.remove_tag(this.0, &tag);
+            Ok(())
+        });
+        m.add_method("HasTag", |lua, this, tag: String| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            Ok(w.has_tag(this.0, &tag))
+        });
+        m.add_method("GetTags", |lua, this, ()| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            check(&w, this.0)?;
+            Ok(w.tags(this.0).map(str::to_string).collect::<Vec<_>>())
         });
         m.add_method("FindFirstChild", |lua, this, name: String| {
             let rc = world_handle(lua);
@@ -593,6 +658,19 @@ pub(crate) fn as_instance(v: &LuaValue) -> Option<LuaInstance> {
         .map(|r| *r)
 }
 
+/// `game:GetService("CollectionService")` — tag queries across the tree.
+pub(crate) struct LuaCollectionService;
+
+impl UserData for LuaCollectionService {
+    fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+        m.add_method("GetTagged", |lua, _, tag: String| {
+            let rc = world_handle(lua);
+            let w = rc.borrow();
+            Ok(w.tagged(&tag).into_iter().map(LuaInstance).collect::<Vec<_>>())
+        });
+    }
+}
+
 fn value_to_lua(lua: &Lua, w: &World, v: &Value) -> mlua::Result<LuaValue> {
     match v {
         Value::Bool(b) => Ok(LuaValue::Boolean(*b)),
@@ -604,6 +682,23 @@ fn value_to_lua(lua: &Lua, w: &World, v: &Value) -> mlua::Result<LuaValue> {
         Value::Rect(r) => LuaRect(*r).into_lua(lua),
         Value::InstanceRef(Some(t)) if w.contains(*t) => LuaInstance(*t).into_lua(lua),
         Value::InstanceRef(_) => Ok(LuaValue::Nil),
+    }
+}
+
+/// Infer a [`Value`] from an arbitrary Lua value — the attribute path, where
+/// no declared type exists. `InstanceRef` is deliberately not inferable:
+/// attributes are data, not links.
+fn infer_value(v: &LuaValue) -> Option<Value> {
+    match v {
+        LuaValue::Boolean(b) => Some(Value::Bool(*b)),
+        LuaValue::Integer(i) => Some(Value::Number(*i as f64)),
+        LuaValue::Number(n) => Some(Value::Number(*n)),
+        LuaValue::String(s) => Some(Value::String(s.to_string_lossy())),
+        _ => as_vec2(v)
+            .map(Value::Vec2)
+            .or_else(|| as_color(v).map(Value::Color))
+            .or_else(|| as_udim2(v).map(Value::UDim2))
+            .or_else(|| as_rect(v).map(Value::Rect)),
     }
 }
 

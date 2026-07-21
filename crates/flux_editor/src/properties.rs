@@ -47,6 +47,128 @@ pub fn show(
                     ui.end_row();
                 }
             });
+
+        attributes_section(ui, world, id, state);
+        tags_section(ui, world, id, state);
+    });
+}
+
+/// Free-form per-instance attributes: edit, remove, add with a type picker.
+fn attributes_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut UiState) {
+    ui.separator();
+    egui::CollapsingHeader::new("Attributes").default_open(true).show(ui, |ui| {
+        let attrs: Vec<(String, Value)> = world
+            .attributes(id)
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
+        if !attrs.is_empty() {
+            egui::Grid::new("attrs")
+                .num_columns(3)
+                .striped(true)
+                .min_col_width(90.0)
+                .show(ui, |ui| {
+                    for (name, value) in &attrs {
+                        ui.label(name);
+                        if let Some((new, merge)) = value_widget(ui, world, name, value) {
+                            state.queue.push(Pending {
+                                cmd: Command::set_attribute(
+                                    id,
+                                    name.clone(),
+                                    Some(value.clone()),
+                                    Some(new),
+                                ),
+                                merge,
+                            });
+                        }
+                        if ui.small_button("✕").on_hover_text("Remove attribute").clicked() {
+                            state.queue.push(Pending {
+                                cmd: Command::set_attribute(id, name.clone(), Some(value.clone()), None),
+                                merge: false,
+                            });
+                        }
+                        ui.end_row();
+                    }
+                });
+        }
+        // Add row: name + type + Add. (No InstanceRef — attributes are data.)
+        const TYPES: [&str; 8] = ["Number", "String", "Bool", "Vec2", "Color", "Rect", "UDim2", "Asset"];
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut state.attr_new_name)
+                    .hint_text("name")
+                    .desired_width(90.0),
+            );
+            egui::ComboBox::from_id_salt("attr_new_ty")
+                .selected_text(TYPES[state.attr_new_ty.min(TYPES.len() - 1)])
+                .show_ui(ui, |ui| {
+                    for (i, t) in TYPES.iter().enumerate() {
+                        ui.selectable_value(&mut state.attr_new_ty, i, *t);
+                    }
+                });
+            let name_ok = !state.attr_new_name.trim().is_empty()
+                && world.attribute(id, state.attr_new_name.trim()).is_none();
+            if ui.add_enabled(name_ok, egui::Button::new("Add")).clicked() {
+                let default = match state.attr_new_ty {
+                    0 => Value::Number(0.0),
+                    1 => Value::String(String::new()),
+                    2 => Value::Bool(false),
+                    3 => Value::Vec2(glam::Vec2::ZERO),
+                    4 => Value::Color(Color::new(1.0, 1.0, 1.0, 1.0)),
+                    5 => Value::Rect(Rect::new(0.0, 0.0, 0.0, 0.0)),
+                    6 => Value::UDim2(UDim2::new(0.0, 0.0, 0.0, 0.0)),
+                    _ => Value::Asset(String::new()),
+                };
+                state.queue.push(Pending {
+                    cmd: Command::set_attribute(
+                        id,
+                        state.attr_new_name.trim().to_string(),
+                        None,
+                        Some(default),
+                    ),
+                    merge: false,
+                });
+                state.attr_new_name.clear();
+            }
+        });
+    });
+}
+
+/// CollectionService-style tags: chips with remove, plus an add field.
+fn tags_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut UiState) {
+    egui::CollapsingHeader::new("Tags").default_open(true).show(ui, |ui| {
+        let tags: Vec<String> = world.tags(id).map(str::to_string).collect();
+        if !tags.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                for tag in &tags {
+                    if ui
+                        .button(format!("{tag}  ✕"))
+                        .on_hover_text("Remove tag")
+                        .clicked()
+                    {
+                        state.queue.push(Pending {
+                            cmd: Command::RemoveTag { id, tag: tag.clone() },
+                            merge: false,
+                        });
+                    }
+                }
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut state.tag_new)
+                    .hint_text("tag")
+                    .desired_width(120.0),
+            );
+            let tag = state.tag_new.trim().to_string();
+            let ok = !tag.is_empty() && !world.has_tag(id, &tag);
+            if ui.add_enabled(ok, egui::Button::new("Add tag")).clicked() {
+                state.queue.push(Pending {
+                    cmd: Command::AddTag { id, tag },
+                    merge: false,
+                });
+                state.tag_new.clear();
+            }
+        });
     });
 }
 

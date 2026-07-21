@@ -25,6 +25,12 @@ struct SavedInstance {
     ref_id: Option<u64>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     props: IndexMap<String, SavedValue>,
+    /// Roblox-style attributes: free-form named values, serialized in both
+    /// scene files and save-games. Never `InstanceRef` (rejected on set).
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    attributes: IndexMap<String, SavedValue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
     /// A `Tilemap`'s runtime grid — only written by save-games (not scene files),
     /// so runtime edits (mining, terraforming) survive a reload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -213,6 +219,12 @@ fn save_instance(
         name: world.name(id).unwrap().to_string(),
         ref_id: ref_ids.get(&id).copied(),
         props,
+        // Attributes/tags are authored data: serialized in BOTH modes.
+        attributes: world
+            .attributes(id)
+            .map(|(k, v)| (k.to_string(), save_value(v, ref_ids)))
+            .collect(),
+        tags: world.tags(id).map(str::to_string).collect(),
         tiles,
         components,
         children: world
@@ -260,6 +272,15 @@ fn load_instance(
             SavedValue::Ref(Some(serial)) => fixups.push((id, pd.name, *serial)),
             _ => world.set_prop(id, pd.name, load_value(sv))?,
         }
+    }
+    for (aname, sv) in &saved.attributes {
+        // Attributes never hold refs; anything else loads verbatim.
+        if !matches!(sv, SavedValue::Ref(_)) {
+            world.set_attribute(id, aname, Some(load_value(sv)))?;
+        }
+    }
+    for tag in &saved.tags {
+        world.add_tag(id, tag);
     }
     if let Some(t) = &saved.tiles {
         tiles.push((id, SavedTiles { w: t.w, h: t.h, runs: t.runs.clone() }));
@@ -366,6 +387,7 @@ fn migrate_legacy_animation(world: &mut World) {
 
 #[cfg(test)]
 mod save_tests {
+    use crate::error::CoreError;
     use crate::tilemap::{self, TileSetCache, WorldGenCache};
     use crate::value::Value;
     use crate::world::World;
@@ -376,6 +398,65 @@ mod save_tests {
             .into_iter()
             .find(|&id| w.class_name(id) == Some("Tilemap"))
             .unwrap()
+    }
+
+    #[test]
+    fn attributes_and_tags_round_trip_in_scene_and_save() {
+        let mut w = World::new();
+        let tm = w.create("Tilemap", w.workspace()).unwrap();
+        w.set_attribute(tm, "Money", Some(Value::Number(150.0))).unwrap();
+        w.set_attribute(tm, "Buildings", Some(Value::Asset("cat.buildings.json".into()))).unwrap();
+        w.set_attribute(tm, "Spawn", Some(Value::Vec2(glam::Vec2::new(3.0, 4.0)))).unwrap();
+        w.add_tag(tm, "main-map");
+        w.add_tag(tm, "hazardous");
+
+        // InstanceRef attributes are rejected outright.
+        assert!(matches!(
+            w.set_attribute(tm, "Link", Some(Value::InstanceRef(None))),
+            Err(CoreError::AttributeNotData)
+        ));
+
+        for json in [w.to_json(), w.to_save_string()] {
+            let re = World::from_json(&json).unwrap();
+            let tm2 = tilemap_of(&re);
+            assert_eq!(re.attribute(tm2, "Money"), Some(&Value::Number(150.0)));
+            assert_eq!(
+                re.attribute(tm2, "Buildings"),
+                Some(&Value::Asset("cat.buildings.json".into()))
+            );
+            assert_eq!(re.attribute(tm2, "Spawn"), Some(&Value::Vec2(glam::Vec2::new(3.0, 4.0))));
+            assert!(re.has_tag(tm2, "main-map") && re.has_tag(tm2, "hazardous"));
+            assert_eq!(re.tagged("main-map"), vec![tm2]);
+        }
+
+        // Removal really removes (and serializes as absent).
+        w.set_attribute(tm, "Money", None).unwrap();
+        w.remove_tag(tm, "hazardous");
+        let re = World::from_json(&w.to_json()).unwrap();
+        let tm2 = tilemap_of(&re);
+        assert_eq!(re.attribute(tm2, "Money"), None);
+        assert!(!re.has_tag(tm2, "hazardous"));
+        assert!(re.has_tag(tm2, "main-map"));
+    }
+
+    #[test]
+    fn clone_and_destroy_carry_attributes_and_tags() {
+        let mut w = World::new();
+        let s = w.create("Sprite", w.workspace()).unwrap();
+        w.set_attribute(s, "Team", Some(Value::String("red".into()))).unwrap();
+        w.add_tag(s, "unit");
+
+        let sub = w.snapshot_subtree(s).unwrap();
+        let map = w.restore_subtree(w.workspace(), 0, &sub).unwrap();
+        let copy = map[&s];
+        assert_ne!(copy, s);
+        assert_eq!(w.attribute(copy, "Team"), Some(&Value::String("red".into())));
+        assert!(w.has_tag(copy, "unit"));
+        assert_eq!(w.tagged("unit").len(), 2);
+
+        w.destroy(s).unwrap();
+        assert_eq!(w.tagged("unit"), vec![copy]);
+        assert_eq!(w.attribute(s, "Team"), None);
     }
 
     #[test]

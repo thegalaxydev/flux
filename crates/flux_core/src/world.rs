@@ -37,6 +37,13 @@ pub struct World {
     /// [`World::component`] and register save (de)serializers with
     /// [`crate::save`].
     components: SecondaryMap<InstanceId, ComponentBag>,
+    /// Roblox-style attributes: free-form, per-instance named values that need
+    /// no class declaration. Serialized with the instance (scenes AND saves).
+    /// `InstanceRef` values are rejected — attributes are data, not links.
+    attributes: SecondaryMap<InstanceId, IndexMap<String, Value>>,
+    /// Roblox-style tags: unordered string labels per instance, queried via
+    /// [`World::tagged`] (CollectionService in Lua). Serialized with the tree.
+    tags: SecondaryMap<InstanceId, indexmap::IndexSet<String>>,
 }
 
 impl World {
@@ -61,6 +68,8 @@ impl World {
             root,
             tilemaps: SecondaryMap::new(),
             components: SecondaryMap::new(),
+            attributes: SecondaryMap::new(),
+            tags: SecondaryMap::new(),
         }
     }
 
@@ -139,6 +148,8 @@ impl World {
         while let Some(cur) = stack.pop() {
             self.tilemaps.remove(cur);
             self.components.remove(cur);
+            self.attributes.remove(cur);
+            self.tags.remove(cur);
             if let Some(inst) = self.instances.remove(cur) {
                 stack.extend(inst.children);
             }
@@ -250,6 +261,86 @@ impl World {
         if let Some(bag) = self.components.get_mut(id) {
             bag.remove(&std::any::TypeId::of::<T>());
         }
+    }
+
+    // ---- attributes (Roblox-style free-form named values) ------------------
+
+    /// The attribute `name` on `id`, if set.
+    pub fn attribute(&self, id: InstanceId, name: &str) -> Option<&Value> {
+        self.attributes.get(id)?.get(name)
+    }
+
+    /// Set (`Some`) or remove (`None`) an attribute. Attributes are plain
+    /// data: `InstanceRef` values are rejected (use tags or declared props to
+    /// link instances).
+    pub fn set_attribute(
+        &mut self,
+        id: InstanceId,
+        name: &str,
+        value: Option<Value>,
+    ) -> Result<(), CoreError> {
+        if !self.instances.contains_key(id) {
+            return Err(CoreError::InstanceNotFound);
+        }
+        if name.is_empty() {
+            return Err(CoreError::BadAttributeName);
+        }
+        match value {
+            Some(Value::InstanceRef(_)) => Err(CoreError::AttributeNotData),
+            Some(v) => {
+                self.attributes
+                    .entry(id)
+                    .unwrap()
+                    .or_default()
+                    .insert(name.to_string(), v);
+                Ok(())
+            }
+            None => {
+                if let Some(map) = self.attributes.get_mut(id) {
+                    map.shift_remove(name);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Iterate `id`'s attributes in insertion order.
+    pub fn attributes(&self, id: InstanceId) -> impl Iterator<Item = (&str, &Value)> {
+        self.attributes
+            .get(id)
+            .into_iter()
+            .flat_map(|m| m.iter().map(|(k, v)| (k.as_str(), v)))
+    }
+
+    // ---- tags (Roblox CollectionService-style labels) -----------------------
+
+    pub fn add_tag(&mut self, id: InstanceId, tag: &str) {
+        if self.instances.contains_key(id) && !tag.is_empty() {
+            self.tags.entry(id).unwrap().or_default().insert(tag.to_string());
+        }
+    }
+
+    pub fn remove_tag(&mut self, id: InstanceId, tag: &str) {
+        if let Some(set) = self.tags.get_mut(id) {
+            set.shift_remove(tag);
+        }
+    }
+
+    pub fn has_tag(&self, id: InstanceId, tag: &str) -> bool {
+        self.tags.get(id).is_some_and(|set| set.contains(tag))
+    }
+
+    /// `id`'s tags in insertion order.
+    pub fn tags(&self, id: InstanceId) -> impl Iterator<Item = &str> {
+        self.tags.get(id).into_iter().flat_map(|s| s.iter().map(|t| t.as_str()))
+    }
+
+    /// Every live instance carrying `tag`, in tree (document) order.
+    pub fn tagged(&self, tag: &str) -> Vec<InstanceId> {
+        self.descendants(self.root)
+            .into_iter()
+            .filter(|&id| self.has_tag(id, tag))
+            .collect()
     }
 
     /// Store (or replace) a tilemap's derived grid. Only meaningful for live
