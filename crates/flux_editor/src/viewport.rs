@@ -438,6 +438,92 @@ pub fn show(
         egui::FontId::proportional(12.0),
         egui::Color32::GRAY,
     );
+
+    if state.pick_debug {
+        draw_pick_debug(&painter, world, &drawn, rect, response.hover_pos(), &to_screen, &to_world);
+    }
+}
+
+/// Picking diagnostics: every stage of the pointer->world->tile conversion,
+/// plus hit bounds and depth values under the cursor. The crosshair marker is
+/// drawn at `to_screen(to_world(cursor))` — if the conversion pipeline is
+/// sound it sits exactly under the pointer at any zoom/pan/window size.
+fn draw_pick_debug(
+    painter: &egui::Painter,
+    world: &World,
+    drawn: &[(InstanceId, Rect)],
+    rect: Rect,
+    pointer: Option<Pos2>,
+    to_screen: &dyn Fn(glam::Vec2) -> Pos2,
+    to_world: &dyn Fn(Pos2) -> glam::Vec2,
+) {
+    let Some(p) = pointer else { return };
+    let wp = to_world(p);
+    let mut lines = vec![
+        format!("raw     ({:.1}, {:.1})", p.x, p.y),
+        format!("local   ({:.1}, {:.1})", p.x - rect.min.x, p.y - rect.min.y),
+        format!("world   ({:.1}, {:.1})", wp.x, wp.y),
+    ];
+
+    // Hovered tile diamond for every tilemap under the cursor.
+    for tm in world.descendants(world.workspace()) {
+        if world.class_name(tm) != Some("Tilemap") {
+            continue;
+        }
+        let pos = match world.get_prop(tm, "Position") {
+            Some(Value::Vec2(v)) => *v,
+            _ => glam::Vec2::ZERO,
+        };
+        let dim = |name: &str, d: f32| match world.get_prop(tm, name) {
+            Some(Value::Number(n)) => *n as f32,
+            _ => d,
+        };
+        let (tw, th) = (dim("TileWidth", 64.0), dim("TileHeight", 32.0));
+        let (col, row) = flux_core::tilemap::world_to_tile(wp - pos, tw, th);
+        lines.push(format!("tile    ({col}, {row})  [{}]", world.name(tm).unwrap_or("?")));
+        let corners: Vec<Pos2> = flux_core::tilemap::tile_corners(col, row, tw, th)
+            .iter()
+            .map(|c| to_screen(pos + *c))
+            .collect();
+        painter.add(egui::Shape::closed_line(corners, Stroke::new(1.5, Color32::from_rgb(80, 220, 120))));
+    }
+
+    // Hit bounds + depth of everything under the cursor (topmost last).
+    for (id, r) in drawn.iter().filter(|(_, r)| r.contains(p)) {
+        painter.rect_stroke(
+            *r,
+            0.0,
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 120, 220, 140)),
+            egui::StrokeKind::Outside,
+        );
+        let z = match world.get_prop(*id, "ZIndex") {
+            Some(Value::Number(n)) => *n,
+            _ => 0.0,
+        };
+        lines.push(format!(
+            "hit     {} (z {z:.1})",
+            world.name(*id).unwrap_or("?"),
+        ));
+    }
+
+    // Crosshair at the round-tripped cursor position: must sit under the pointer.
+    let back = to_screen(wp);
+    let cross = Stroke::new(1.0, Color32::from_rgb(255, 220, 80));
+    painter.line_segment([back - egui::vec2(8.0, 0.0), back + egui::vec2(8.0, 0.0)], cross);
+    painter.line_segment([back - egui::vec2(0.0, 8.0), back + egui::vec2(0.0, 8.0)], cross);
+    painter.circle_stroke(back, 4.0, cross);
+
+    let mut y = rect.top() + 26.0;
+    for line in lines {
+        painter.text(
+            egui::pos2(rect.left() + 8.0, y),
+            egui::Align2::LEFT_TOP,
+            line,
+            egui::FontId::monospace(11.0),
+            Color32::from_rgb(255, 220, 80),
+        );
+        y += 13.0;
+    }
 }
 
 // ---- sprite transform ------------------------------------------------------

@@ -37,6 +37,9 @@ pub struct UiState {
     pub tool: crate::viewport::Tool,
     pub grid_snap: bool,
     pub grid_size: f32,
+    /// Picking diagnostics overlay: cursor coordinates at every pipeline
+    /// stage, the hovered tile diamond, hit bounds + depth values.
+    pub pick_debug: bool,
     /// Rotation snap increment (degrees) applied while holding Shift.
     pub angle_snap: f32,
     /// Set when a drag is cancelled (Escape); suppresses further drag handling
@@ -71,6 +74,7 @@ impl Default for UiState {
             tool: crate::viewport::Tool::default(),
             grid_snap: false,
             grid_size: 32.0,
+            pick_debug: false,
             angle_snap: 15.0,
             suppress_drag: false,
             viewport_rect: egui::Rect::NOTHING,
@@ -990,6 +994,10 @@ impl EditorApp {
                         }
                     }
                 }
+
+                ui.separator();
+                ui.checkbox(&mut self.ui.pick_debug, "Pick debug")
+                    .on_hover_text("Show cursor->world->tile conversion, hit bounds and depth values");
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let dark = ui.visuals().dark_mode;

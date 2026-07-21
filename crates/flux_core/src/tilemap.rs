@@ -57,7 +57,11 @@ pub fn world_to_tile(p: Vec2, tw: f32, th: f32) -> (i32, i32) {
     let b = 2.0 * p.y / th; // col + row
     let col = (a + b) * 0.5;
     let row = (b - a) * 0.5;
-    (col.floor() as i32, row.floor() as i32)
+    // `tile_to_world` is the tile CENTRE, so the drawn diamond is centre-based
+    // and the correct inverse rounds to the nearest index. `floor` would pick
+    // a diamond shifted half a tile down-right of the drawn one — every pick
+    // would land on the tile "above" the cursor.
+    (col.round() as i32, row.round() as i32)
 }
 
 /// The four diamond corners (top, right, bottom, left) of tile `(col, row)` in
@@ -798,6 +802,32 @@ mod tests {
             let w = tile_to_world(c, r, tw, th);
             assert_eq!(world_to_tile(w, tw, th), (c, r), "round trip ({c},{r})");
         }
+    }
+
+    #[test]
+    fn world_to_tile_matches_the_drawn_diamond() {
+        // Points anywhere inside a tile's DRAWN diamond (centre ± half, per
+        // tile_corners) must map back to that tile — this is what makes picks
+        // land under the cursor instead of half a tile above.
+        let (tw, th) = (64.0, 32.0);
+        for &(c, r) in &[(0, 0), (2, 3), (-1, 4), (5, -2)] {
+            let centre = tile_to_world(c, r, tw, th);
+            let probes = [
+                centre,
+                centre + Vec2::new(0.0, -th * 0.49),  // near top corner
+                centre + Vec2::new(0.0, th * 0.49),   // near bottom corner
+                centre + Vec2::new(-tw * 0.49, 0.0),  // near left corner
+                centre + Vec2::new(tw * 0.49, 0.0),   // near right corner
+                centre + Vec2::new(tw * 0.2, th * 0.2), // lower-right quadrant
+                centre + Vec2::new(-tw * 0.2, -th * 0.2), // upper-left quadrant
+            ];
+            for p in probes {
+                assert_eq!(world_to_tile(p, tw, th), (c, r), "probe {p:?} in tile ({c},{r})");
+            }
+        }
+        // A point clearly in the top half of tile (0,0)'s diamond — the old
+        // floor() behaviour mapped this to (-1,-1).
+        assert_eq!(world_to_tile(Vec2::new(0.0, -10.0), tw, th), (0, 0));
     }
 
     #[test]
