@@ -254,6 +254,19 @@ pub(crate) fn install() {
         list.into_lua_multi(lua)
     });
 
+    // GetStatus() -> (state, reason): the sprite state (idle/working/...) plus
+    // the human-readable problem line ("Missing coolant", "" when healthy).
+    api::register_method("GetStatus", |lua, id, args| {
+        <()>::from_lua_multi(args, lua)?;
+        let rc = api::world(lua);
+        let w = rc.borrow();
+        let get = |name: &str| match w.get_prop(id, name) {
+            Some(flux_core::Value::String(s)) => s.clone(),
+            _ => String::new(),
+        };
+        (get("_State"), get("_Status")).into_lua_multi(lua)
+    });
+
     // A building's fluid tanks: list of {id, fluid, volume, capacity}.
     api::register_method("GetTank", |lua, id, args| {
         <()>::from_lua_multi(args, lua)?;

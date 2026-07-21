@@ -41,7 +41,8 @@ fn port_color(kind: crate::ports::PortKind) -> Color32 {
 }
 
 /// Draw a building's port markers: a dot on the boundary edge, an arrow
-/// pointing out for outputs / in for inputs, coloured by kind.
+/// pointing out for outputs / in for inputs, coloured by kind. `strength`
+/// dims markers (compatibility hints draw fainter than selection).
 fn draw_ports(
     painter: &Painter,
     ctx: &RenderCtx,
@@ -49,6 +50,7 @@ fn draw_ports(
     tw: f32,
     th: f32,
     ports: &[crate::ports::ResolvedPort],
+    strength: f32,
 ) {
     for rp in ports {
         let cell_c = flux_core::tilemap::tile_to_world(rp.cell.0, rp.cell.1, tw, th);
@@ -56,7 +58,7 @@ fn draw_ports(
         // Midpoint of the shared edge, nudged outward.
         let edge = (cell_c + face_c) * 0.5;
         let out = (face_c - cell_c) * 0.5;
-        let color = port_color(rp.port.kind);
+        let color = port_color(rp.port.kind).gamma_multiply(strength);
         let p0 = ctx.to_screen(map_pos + edge - out * 0.4);
         let p1 = ctx.to_screen(map_pos + edge + out * 0.4);
         let (tail, head) = if rp.port.flow.gives_output() { (p0, p1) } else { (p1, p0) };
@@ -156,7 +158,7 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
                     Stroke::new(2.0, Color32::from_rgb(255, 210, 80)),
                 ));
                 if let Some(baked) = crate::ports::of(world, bid) {
-                    draw_ports(painter, ctx, pos, tw, th, &baked.0);
+                    draw_ports(painter, ctx, pos, tw, th, &baked.0, 1.0);
                 }
             }
             if crate::building::sprite_of(world, bid).is_some() {
@@ -178,10 +180,31 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
             }
         }
 
-        // Placement preview: the ghost's ports, so you can line up conveyors
-        // and pipes before committing.
+        // Placement preview: the ghost's ports, plus compatible ports on
+        // every machine while a belt (item inputs) or pipe (fluid ports) is
+        // held — so you can see where connections will land.
         if let Some(gp) = world.component::<crate::building::GhostPorts>(tm) {
-            draw_ports(painter, ctx, pos, tw, th, &gp.0);
+            draw_ports(painter, ctx, pos, tw, th, &gp.ports, 1.0);
+            if gp.directional || gp.pipe {
+                for b in world.children(tm).iter().copied() {
+                    let Some(baked) = crate::ports::of(world, b) else { continue };
+                    let compatible: Vec<crate::ports::ResolvedPort> = baked
+                        .0
+                        .iter()
+                        .filter(|rp| {
+                            if gp.pipe {
+                                rp.port.kind.is_fluid()
+                            } else {
+                                rp.port.kind == crate::ports::PortKind::Item
+                            }
+                        })
+                        .cloned()
+                        .collect();
+                    if !compatible.is_empty() {
+                        draw_ports(painter, ctx, pos, tw, th, &compatible, 0.45);
+                    }
+                }
+            }
         }
 
         // Item-flow pips: each recent hop animates from source to destination.

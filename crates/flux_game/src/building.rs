@@ -648,8 +648,14 @@ fn attach_sprite(
 }
 
 /// Ports of the building currently being previewed by the ghost (transient
-/// component on the tilemap; the overlay draws them during placement).
-pub struct GhostPorts(pub Vec<crate::ports::ResolvedPort>);
+/// component on the tilemap; the overlay draws them during placement), plus
+/// what the ghost is — so the overlay can highlight compatible ports on
+/// existing machines while a belt or pipe is held.
+pub struct GhostPorts {
+    pub ports: Vec<crate::ports::ResolvedPort>,
+    pub directional: bool,
+    pub pipe: bool,
+}
 
 /// Show, move or clear the placement ghost: a translucent preview sprite that
 /// follows the cursor, tinted by placement validity. `None` clears it.
@@ -666,7 +672,14 @@ pub fn set_ghost(world: &mut World, tilemap: InstanceId, ghost: Option<(&Buildin
         world.remove_component::<GhostPorts>(tilemap);
         return;
     };
-    world.set_component::<GhostPorts>(tilemap, GhostPorts(crate::ports::resolve(def, col, row, dir)));
+    world.set_component::<GhostPorts>(
+        tilemap,
+        GhostPorts {
+            ports: crate::ports::resolve(def, col, row, dir),
+            directional: def.directional,
+            pipe: def.pipe,
+        },
+    );
     if def.sprite.is_none() {
         return;
     }
