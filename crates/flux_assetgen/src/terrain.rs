@@ -130,16 +130,20 @@ pub fn generate(root: &Path) -> Result<(), String> {
     let dir = root.join("art");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    let mut atlas = Canvas::new(TILE_W * TILES.len() as u32, TILE_H);
+    // Gutter between tiles so linear filtering never bleeds a neighbour in
+    // (the renderer also insets UVs half a texel).
+    const GUTTER: u32 = 2;
+    let stride = TILE_W + GUTTER;
+    let mut atlas = Canvas::new(stride * TILES.len() as u32, TILE_H);
     let mut tiles_json = Vec::new();
     for (i, (id, color)) in TILES.iter().enumerate() {
         let mut rng = Rng::new(0xA55E7 + i as u32 * 7919);
-        draw_tile(&mut atlas, i as i32 * TILE_W as i32, id, *color, &mut rng);
+        draw_tile(&mut atlas, (i as u32 * stride) as i32, id, *color, &mut rng);
         let c = |v: u8| (v as f32 / 255.0 * 100.0).round() / 100.0;
         tiles_json.push(serde_json::json!({
             "id": id,
             "color": [c(color[0]), c(color[1]), c(color[2]), 1.0],
-            "rect": [i as u32 * TILE_W, 0, TILE_W, TILE_H],
+            "rect": [i as u32 * stride, 0, TILE_W, TILE_H],
         }));
     }
     atlas.save_png(&dir.join("terrain.png"))?;

@@ -458,20 +458,27 @@ pub fn all() -> Vec<BuildingArt> {
 // Sheet packing + frames.json
 // ---------------------------------------------------------------------------
 
+/// Gutter between packed frames (pixels). With linear filtering, adjacent
+/// frames bleed into each other at shared edges; the renderer also insets UVs
+/// half a texel, and this gap makes any residual taps hit transparent gutter
+/// rather than a neighbouring frame.
+const GUTTER: u32 = 2;
+
 /// Pack a building's clips into one sheet (one row per clip) and emit the
 /// engine `*.frames.json` next to it. Returns `(sheet, json)`.
 pub fn pack(art: &BuildingArt) -> (Canvas, String) {
     let (fw, fh) = art.frame;
     let cols = art.clips.iter().map(|c| c.frames.len()).max().unwrap_or(1) as u32;
-    let mut sheet = Canvas::new(fw * cols, fh * art.clips.len() as u32);
+    let (cw, ch) = (fw + GUTTER, fh + GUTTER);
+    let mut sheet = Canvas::new(cw * cols, ch * art.clips.len() as u32);
     let mut clips_json = serde_json::Map::new();
 
     for (row, clip) in art.clips.iter().enumerate() {
         let mut frames = Vec::new();
         for (col, frame) in clip.frames.iter().enumerate() {
-            sheet.blit(frame, col as i32 * fw as i32, row as i32 * fh as i32);
+            sheet.blit(frame, col as i32 * cw as i32, row as i32 * ch as i32);
             frames.push(serde_json::json!({
-                "rect": [col as u32 * fw, row as u32 * fh, fw, fh],
+                "rect": [col as u32 * cw, row as u32 * ch, fw, fh],
                 "duration": clip.duration,
             }));
         }

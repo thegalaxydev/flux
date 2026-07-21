@@ -442,8 +442,11 @@ fn style_sprite(world: &mut World, sprite: InstanceId, def: &BuildingDef, tilema
         let _ = world.set_prop(sprite, "FlipX", Value::Bool(fx));
         let _ = world.set_prop(sprite, "FlipY", Value::Bool(fy));
     }
-    // Iso depth: farther rows draw first; tilemaps sit at ZIndex 0.
-    let _ = world.set_prop(sprite, "ZIndex", Value::Number(10.0 + (col + row) as f64));
+    // Iso depth anchored on the FRONT corner (nearest to camera): a multi-
+    // tile building must sort by its closest tile, or smaller neighbours
+    // placed in front would overdraw its body. Tilemaps sit at ZIndex 0.
+    let front = (col + def.width as i32 - 1) + (row + def.height as i32 - 1);
+    let _ = world.set_prop(sprite, "ZIndex", Value::Number(10.0 + front as f64));
 }
 
 /// Create the building's child `AnimatedSprite`, positioned so its authored

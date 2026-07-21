@@ -75,8 +75,8 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
                 Some((c, cell.x as i32, cell.y as i32, (fp.x as i32).max(1), (fp.y as i32).max(1)))
             })
             .collect();
-        // Back-to-front: smaller (col + row) is farther from the camera.
-        buildings.sort_by_key(|&(_, col, row, _, _)| col + row);
+        // Back-to-front by FRONT corner (matches the sprite ZIndex anchor).
+        buildings.sort_by_key(|&(_, col, row, w, h)| col + w - 1 + row + h - 1);
 
         for (bid, col, row, w, h) in buildings {
             if !matches!(world.get_prop(bid, "Visible"), Some(Value::Bool(true))) {

@@ -219,11 +219,14 @@ pub fn draw_scene(
             let (mut u0, mut v0, mut u1, mut v1) = if src.is_whole() || tw <= 0.0 || th <= 0.0 {
                 (0.0, 0.0, 1.0, 1.0)
             } else {
+                // Half-texel inset: with linear filtering, sampling exactly on
+                // a sub-rect edge bleeds the neighbouring atlas region in
+                // (visible as hard bands on packed animation frames).
                 (
-                    src.x / tw,
-                    src.y / th,
-                    (src.x + src.w) / tw,
-                    (src.y + src.h) / th,
+                    (src.x + 0.5) / tw,
+                    (src.y + 0.5) / th,
+                    (src.x + src.w - 0.5) / tw,
+                    (src.y + src.h - 0.5) / th,
                 )
             };
             if flip_x {
@@ -386,9 +389,11 @@ fn draw_tilemap(
                 let c = flux_core::tilemap::tile_to_world(col, row, tw, th);
                 let tl = to_screen(pos.x + c.x - tw * 0.5 * inset, pos.y + c.y - th * 0.5 * inset);
                 let br = to_screen(pos.x + c.x + tw * 0.5 * inset, pos.y + c.y + th * 0.5 * inset);
+                // Half-texel inset (see the sprite path): keeps linear
+                // filtering from bleeding the neighbouring atlas tile in.
                 let uv = Rect::from_min_max(
-                    Pos2::new(src.x / tpw, src.y / tph),
-                    Pos2::new((src.x + src.w) / tpw, (src.y + src.h) / tph),
+                    Pos2::new((src.x + 0.5) / tpw, (src.y + 0.5) / tph),
+                    Pos2::new((src.x + src.w - 0.5) / tpw, (src.y + src.h - 0.5) / tph),
                 );
                 let mut mesh = Mesh::with_texture(h.id());
                 mesh.add_rect_with_uv(Rect::from_two_pos(tl, br), uv, Color32::WHITE);
