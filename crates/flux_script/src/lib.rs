@@ -112,10 +112,35 @@ pub(crate) type ButtonSignals = Rc<RefCell<HashMap<InstanceId, Signal>>>;
 type MethodHandler =
     Box<dyn Fn(&Lua, InstanceId, mlua::MultiValue) -> mlua::Result<mlua::MultiValue> + Send + Sync>;
 
-static METHODS: std::sync::RwLock<Vec<(String, MethodHandler)>> = std::sync::RwLock::new(Vec::new());
-static SERVICES: std::sync::RwLock<Vec<(String, fn(&Lua) -> mlua::Result<mlua::Value>)>> =
-    std::sync::RwLock::new(Vec::new());
-static SESSION_INITS: std::sync::RwLock<Vec<fn(&Lua)>> = std::sync::RwLock::new(Vec::new());
+/// flux_script's registry state — adoptable across a plugin DLL boundary (see
+/// `flux_core::registries` for the pattern rationale).
+pub struct ScriptRegistries {
+    methods: std::sync::RwLock<Vec<(String, MethodHandler)>>,
+    services: std::sync::RwLock<Vec<(String, fn(&Lua) -> mlua::Result<mlua::Value>)>>,
+    session_inits: std::sync::RwLock<Vec<fn(&Lua)>>,
+}
+
+static SHARED: std::sync::OnceLock<&'static ScriptRegistries> = std::sync::OnceLock::new();
+
+fn regs() -> &'static ScriptRegistries {
+    SHARED.get_or_init(|| {
+        Box::leak(Box::new(ScriptRegistries {
+            methods: std::sync::RwLock::new(Vec::new()),
+            services: std::sync::RwLock::new(Vec::new()),
+            session_inits: std::sync::RwLock::new(Vec::new()),
+        }))
+    })
+}
+
+/// The process-wide registries — the host passes this to loaded plugins.
+pub fn share_registries() -> &'static ScriptRegistries {
+    regs()
+}
+
+/// Adopt the host's registries (plugin entry point, before any registration).
+pub fn adopt_registries(shared: &'static ScriptRegistries) {
+    let _ = SHARED.set(shared);
+}
 
 /// Register a plugin method callable on any instance as `obj:Name(...)`. The
 /// handler receives the instance id and the call arguments (self already
@@ -124,25 +149,22 @@ pub fn register_method<F>(name: &str, handler: F)
 where
     F: Fn(&Lua, InstanceId, mlua::MultiValue) -> mlua::Result<mlua::MultiValue> + Send + Sync + 'static,
 {
-    METHODS
-        .write()
-        .unwrap()
-        .push((name.to_string(), Box::new(handler)));
+    regs().methods.write().unwrap().push((name.to_string(), Box::new(handler)));
 }
 
 /// Register a service returned by `game:GetService(name)`.
 pub fn register_service(name: &str, factory: fn(&Lua) -> mlua::Result<mlua::Value>) {
-    SERVICES.write().unwrap().push((name.to_string(), factory));
+    regs().services.write().unwrap().push((name.to_string(), factory));
 }
 
 /// Register a callback run once per session in `ScriptHost::new` — e.g. to set
 /// plugin app-data the method handlers need.
 pub fn register_session_init(f: fn(&Lua)) {
-    SESSION_INITS.write().unwrap().push(f);
+    regs().session_inits.write().unwrap().push(f);
 }
 
 pub(crate) fn has_method(name: &str) -> bool {
-    METHODS.read().unwrap().iter().any(|(n, _)| n == name)
+    regs().methods.read().unwrap().iter().any(|(n, _)| n == name)
 }
 
 pub(crate) fn call_method(
@@ -151,7 +173,7 @@ pub(crate) fn call_method(
     id: InstanceId,
     args: mlua::MultiValue,
 ) -> mlua::Result<mlua::MultiValue> {
-    let guard = METHODS.read().unwrap();
+    let guard = regs().methods.read().unwrap();
     let (_, handler) = guard
         .iter()
         .find(|(n, _)| n == name)
@@ -160,12 +182,12 @@ pub(crate) fn call_method(
 }
 
 pub(crate) fn lookup_service(lua: &Lua, name: &str) -> Option<mlua::Result<mlua::Value>> {
-    let guard = SERVICES.read().unwrap();
+    let guard = regs().services.read().unwrap();
     guard.iter().find(|(n, _)| n == name).map(|(_, f)| f(lua))
 }
 
 fn run_session_inits(lua: &Lua) {
-    for f in SESSION_INITS.read().unwrap().iter() {
+    for f in regs().session_inits.read().unwrap().iter() {
         f(lua);
     }
 }

@@ -85,12 +85,33 @@ impl RenderCtx {
 }
 
 type Overlay = fn(&Painter, &World, &RenderCtx);
-static OVERLAYS: RwLock<Vec<Overlay>> = RwLock::new(Vec::new());
+
+/// flux_view's registry state — adoptable across a plugin DLL boundary (see
+/// `flux_core::registries` for the pattern rationale).
+pub struct ViewRegistries {
+    overlays: RwLock<Vec<Overlay>>,
+}
+
+static SHARED: std::sync::OnceLock<&'static ViewRegistries> = std::sync::OnceLock::new();
+
+fn regs() -> &'static ViewRegistries {
+    SHARED.get_or_init(|| Box::leak(Box::new(ViewRegistries { overlays: RwLock::new(Vec::new()) })))
+}
+
+/// The process-wide registries — the host passes this to loaded plugins.
+pub fn share_registries() -> &'static ViewRegistries {
+    regs()
+}
+
+/// Adopt the host's registries (plugin entry point, before any registration).
+pub fn adopt_registries(shared: &'static ViewRegistries) {
+    let _ = SHARED.set(shared);
+}
 
 /// Register a plugin overlay, drawn every frame after sprites/tilemaps and
 /// before the GUI layer. Used by plugins to render their own node types.
 pub fn register_overlay(f: Overlay) {
-    OVERLAYS.write().unwrap().push(f);
+    regs().overlays.write().unwrap().push(f);
 }
 
 pub fn to_color(c: &Color) -> Color32 {
@@ -265,7 +286,7 @@ pub fn draw_scene(
     // world and the GUI.
     {
         let overlay_ctx = RenderCtx { rect, camera, time: ctx.input(|i| i.time) as f32 };
-        for f in OVERLAYS.read().unwrap().iter() {
+        for f in regs().overlays.read().unwrap().iter() {
             f(painter, world, &overlay_ctx);
         }
     }

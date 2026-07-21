@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::OnceLock;
 
 use glam::Vec2;
 
@@ -364,17 +363,19 @@ impl ClassRegistry {
     }
 }
 
-static REGISTRY: OnceLock<ClassRegistry> = OnceLock::new();
-
 /// Install the class registry for the process. Apps that load plugins build it
 /// from [`ClassRegistry::builtins`] (plus plugin `add`/`extend` calls) and
 /// install it once, before any world is created. Later calls are ignored.
+///
+/// Storage lives in [`crate::registries`], so a runtime-loaded plugin that
+/// adopted the host's registries installs into the same instance the host
+/// reads.
 pub fn install(registry: ClassRegistry) {
-    let _ = REGISTRY.set(registry);
+    let _ = crate::registries::regs().class.set(registry);
 }
 
 /// The installed class registry, lazily falling back to engine built-ins only
 /// (so engine-only tools and tests work without an explicit [`install`]).
 pub fn registry() -> &'static ClassRegistry {
-    REGISTRY.get_or_init(ClassRegistry::builtins)
+    crate::registries::regs().class.get_or_init(ClassRegistry::builtins)
 }

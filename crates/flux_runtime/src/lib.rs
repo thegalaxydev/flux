@@ -16,12 +16,32 @@ pub trait System {
     fn step(&mut self, world: &mut World, root: &Path, dt: f32);
 }
 
-static SYSTEMS: RwLock<Vec<fn() -> Box<dyn System>>> = RwLock::new(Vec::new());
+/// flux_runtime's registry state — adoptable across a plugin DLL boundary (see
+/// `flux_core::registries` for the pattern rationale).
+pub struct RuntimeRegistries {
+    systems: RwLock<Vec<fn() -> Box<dyn System>>>,
+}
+
+static SHARED: std::sync::OnceLock<&'static RuntimeRegistries> = std::sync::OnceLock::new();
+
+fn regs() -> &'static RuntimeRegistries {
+    SHARED.get_or_init(|| Box::leak(Box::new(RuntimeRegistries { systems: RwLock::new(Vec::new()) })))
+}
+
+/// The process-wide registries — the host passes this to loaded plugins.
+pub fn share_registries() -> &'static RuntimeRegistries {
+    regs()
+}
+
+/// Adopt the host's registries (plugin entry point, before any registration).
+pub fn adopt_registries(shared: &'static RuntimeRegistries) {
+    let _ = SHARED.set(shared);
+}
 
 /// Register a system constructor. Each [`Session`] builds one instance (so a
 /// system may own per-session caches) and steps it every frame.
 pub fn register_system(ctor: fn() -> Box<dyn System>) {
-    SYSTEMS.write().unwrap().push(ctor);
+    regs().systems.write().unwrap().push(ctor);
 }
 
 /// How a play session is configured: the persistence backend
@@ -81,7 +101,7 @@ impl Session {
         if let Some(warning) = warning {
             host.push_error(warning);
         }
-        let systems = SYSTEMS.read().unwrap().iter().map(|ctor| ctor()).collect();
+        let systems = regs().systems.read().unwrap().iter().map(|ctor| ctor()).collect();
         Ok(Session {
             host,
             systems,

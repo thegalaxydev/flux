@@ -74,25 +74,51 @@ pub enum AssetKind {
 
 use std::sync::RwLock;
 
-// (suffix, kind-name) and (kind-name, class, prop) registered by plugins.
-static CUSTOM_KINDS: RwLock<Vec<(&'static str, &'static str)>> = RwLock::new(Vec::new());
-static DROPS: RwLock<Vec<(&'static str, &'static str, &'static str)>> = RwLock::new(Vec::new());
+/// flux_render's registry state — adoptable across a plugin DLL boundary (see
+/// `flux_core::registries` for the pattern rationale). Holds `(suffix,
+/// kind-name)` asset kinds and `(kind-name, class, target)` drop rules.
+pub struct RenderRegistries {
+    custom_kinds: RwLock<Vec<(&'static str, &'static str)>>,
+    drops: RwLock<Vec<(&'static str, &'static str, &'static str)>>,
+}
+
+static SHARED: std::sync::OnceLock<&'static RenderRegistries> = std::sync::OnceLock::new();
+
+fn regs() -> &'static RenderRegistries {
+    SHARED.get_or_init(|| {
+        Box::leak(Box::new(RenderRegistries {
+            custom_kinds: RwLock::new(Vec::new()),
+            drops: RwLock::new(Vec::new()),
+        }))
+    })
+}
+
+/// The process-wide registries — the host passes this to loaded plugins.
+pub fn share_registries() -> &'static RenderRegistries {
+    regs()
+}
+
+/// Adopt the host's registries (plugin entry point, before any registration).
+pub fn adopt_registries(shared: &'static RenderRegistries) {
+    let _ = SHARED.set(shared);
+}
 
 /// Register a plugin asset type: files ending in `suffix` classify as
 /// `AssetKind::Custom(name)`.
 pub fn register_asset_kind(suffix: &'static str, name: &'static str) {
-    CUSTOM_KINDS.write().unwrap().push((suffix, name));
+    regs().custom_kinds.write().unwrap().push((suffix, name));
 }
 
 /// Register what dropping a `Custom(name)` asset into the scene creates:
 /// an instance of `class` with the asset set on `prop`.
 pub fn register_drop(name: &'static str, class: &'static str, prop: &'static str) {
-    DROPS.write().unwrap().push((name, class, prop));
+    regs().drops.write().unwrap().push((name, class, prop));
 }
 
 /// The `(class, prop)` a dropped `Custom(name)` asset should create, if any.
 pub fn drop_target(name: &str) -> Option<(&'static str, &'static str)> {
-    DROPS
+    regs()
+        .drops
         .read()
         .unwrap()
         .iter()
@@ -115,7 +141,7 @@ pub fn classify(name: &str, is_dir: bool) -> AssetKind {
         return AssetKind::WorldGen;
     }
     // Plugin-registered asset suffixes (e.g. a game's catalogs).
-    for (suffix, name) in CUSTOM_KINDS.read().unwrap().iter() {
+    for (suffix, name) in regs().custom_kinds.read().unwrap().iter() {
         if lower.ends_with(suffix) {
             return AssetKind::Custom(name);
         }
