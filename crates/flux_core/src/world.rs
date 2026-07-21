@@ -270,36 +270,29 @@ impl World {
         self.attributes.get(id)?.get(name)
     }
 
-    /// Set (`Some`) or remove (`None`) an attribute. `InstanceRef` values are
-    /// allowed ("Object" attributes) — readers should treat a destroyed
-    /// target like `None` (the ref is not cleared retroactively).
-    pub fn set_attribute(
-        &mut self,
-        id: InstanceId,
-        name: &str,
-        value: Option<Value>,
-    ) -> Result<(), CoreError> {
+    /// Set an attribute. `InstanceRef` values are allowed ("Object"
+    /// attributes; `InstanceRef(None)` is an object attribute pointing at
+    /// nothing) — readers should treat a destroyed target like `None`.
+    /// Removal is a separate operation: [`World::remove_attribute`].
+    pub fn set_attribute(&mut self, id: InstanceId, name: &str, value: Value) -> Result<(), CoreError> {
         if !self.instances.contains_key(id) {
             return Err(CoreError::InstanceNotFound);
         }
         if name.is_empty() {
             return Err(CoreError::BadAttributeName);
         }
-        match value {
-            Some(v) => {
-                self.attributes
-                    .entry(id)
-                    .unwrap()
-                    .or_default()
-                    .insert(name.to_string(), v);
-                Ok(())
-            }
-            None => {
-                if let Some(map) = self.attributes.get_mut(id) {
-                    map.shift_remove(name);
-                }
-                Ok(())
-            }
+        self.attributes
+            .entry(id)
+            .unwrap()
+            .or_default()
+            .insert(name.to_string(), value);
+        Ok(())
+    }
+
+    /// Remove an attribute entirely (no-op if absent).
+    pub fn remove_attribute(&mut self, id: InstanceId, name: &str) {
+        if let Some(map) = self.attributes.get_mut(id) {
+            map.shift_remove(name);
         }
     }
 

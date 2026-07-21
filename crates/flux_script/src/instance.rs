@@ -184,16 +184,32 @@ impl UserData for LuaInstance {
             let mut w = rc.borrow_mut();
             check(&w, this.0)?;
             let value = match &value {
-                LuaValue::Nil => None,
-                v => Some(infer_value(v).ok_or_else(|| {
+                // nil clears an Object attribute's target (it keeps existing).
+                // Removing an attribute is a distinct operation: RemoveAttribute.
+                LuaValue::Nil => match w.attribute(this.0, &name) {
+                    Some(Value::InstanceRef(_)) => Value::InstanceRef(None),
+                    _ => {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "SetAttribute: nil only clears Object attributes — use RemoveAttribute(\"{name}\") to delete"
+                        )));
+                    }
+                },
+                v => infer_value(v).ok_or_else(|| {
                     mlua::Error::RuntimeError(format!(
                         "SetAttribute: unsupported value type '{}'",
                         v.type_name()
                     ))
-                })?),
+                })?,
             };
             w.set_attribute(this.0, &name, value)
                 .map_err(|e| mlua::Error::RuntimeError(e.to_string()))
+        });
+        m.add_method("RemoveAttribute", |lua, this, name: String| {
+            let rc = world_handle(lua);
+            let mut w = rc.borrow_mut();
+            check(&w, this.0)?;
+            w.remove_attribute(this.0, &name);
+            Ok(())
         });
         m.add_method("GetAttribute", |lua, this, name: String| {
             let rc = world_handle(lua);

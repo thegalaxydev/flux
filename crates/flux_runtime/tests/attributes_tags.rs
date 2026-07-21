@@ -18,8 +18,13 @@ print("attr str " .. tostring(ws:GetAttribute("Label")))
 local s = ws:GetAttribute("Spot")
 print("attr vec " .. tostring(s.X == 1 and s.Y == 2))
 
-ws:SetAttribute("Money", nil)
+-- Removal is explicit; nil never deletes an attribute.
+ws:RemoveAttribute("Money")
 print("attr gone " .. tostring(ws:GetAttribute("Money") == nil))
+local nilRemove = pcall(function()
+	ws:SetAttribute("Label", nil)
+end)
+print("attr nil refused " .. tostring(not nilRemove))
 local n = 0
 for _, _ in pairs(ws:GetAttributes()) do
 	n += 1
@@ -42,6 +47,19 @@ temp.Parent = ws
 ws:SetAttribute("Doomed", temp)
 temp:Destroy()
 print("attr object dangling " .. tostring(ws:GetAttribute("Doomed") == nil))
+
+-- nil CLEARS an Object attribute (keeps it, pointing at nothing): clearing
+-- again still succeeds, but after RemoveAttribute nil is refused.
+ws:SetAttribute("MainCamera", nil)
+local clearAgain = pcall(function()
+	ws:SetAttribute("MainCamera", nil)
+end)
+print("attr object cleared " .. tostring(ws:GetAttribute("MainCamera") == nil and clearAgain))
+ws:RemoveAttribute("MainCamera")
+local clearRemoved = pcall(function()
+	ws:SetAttribute("MainCamera", nil)
+end)
+print("attr object removed " .. tostring(not clearRemoved))
 "#;
 
 fn scene(script_rel: &str) -> String {
@@ -87,12 +105,15 @@ fn lua_attributes_and_tags_work() {
     assert!(has("attr str hi"), "{logs:?}");
     assert!(has("attr vec true"), "{logs:?}");
     assert!(has("attr gone true"), "{logs:?}");
+    assert!(has("attr nil refused true"), "{logs:?}");
     assert!(has("attr count 2"), "{logs:?}");
     assert!(has("tag has true"), "{logs:?}");
     assert!(has("tag query true"), "{logs:?}");
     assert!(has("tag removed true"), "{logs:?}");
     assert!(has("attr object true"), "{logs:?}");
     assert!(has("attr object dangling true"), "{logs:?}");
+    assert!(has("attr object cleared true"), "{logs:?}");
+    assert!(has("attr object removed true"), "{logs:?}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

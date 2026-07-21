@@ -399,7 +399,7 @@ mod tests {
         let tm = w.create("Tilemap", w.workspace()).unwrap();
         w.set_prop(tm, "MapWidth", Value::Number(16.0)).unwrap();
         w.set_prop(tm, "MapHeight", Value::Number(16.0)).unwrap();
-        w.set_attribute(tm, "Buildings", Some(Value::Asset("b.buildings.json".into()))).unwrap();
+        w.set_attribute(tm, "Buildings", Value::Asset("b.buildings.json".into())).unwrap();
         let cat = Rc::new(BuildingCatalog::parse(catalog).unwrap());
         let r = crate::building::place(&mut w, tm, cat.get("reactor").unwrap(), 2, 2, 0).unwrap();
         let t = crate::building::place(&mut w, tm, cat.get("cooling").unwrap(), 4, 2, 0).unwrap();
@@ -428,7 +428,7 @@ mod tests {
         let dir = std::env::temp_dir().join("flux_game_reactor_test");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("b.buildings.json"), CATALOG).unwrap();
-        w.set_attribute(tm, "Buildings", Some(Value::Asset("b.buildings.json".into()))).unwrap();
+        w.set_attribute(tm, "Buildings", Value::Asset("b.buildings.json".into())).unwrap();
         crate::building::place(&mut w, tm, cat.get("lamp").unwrap(), 8, 8, 0).unwrap();
         crate::building::place(&mut w, tm, cat.get("lamp").unwrap(), 10, 10, 0).unwrap();
 

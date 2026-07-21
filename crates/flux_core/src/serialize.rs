@@ -25,8 +25,8 @@ struct SavedInstance {
     ref_id: Option<u64>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     props: IndexMap<String, SavedValue>,
-    /// Roblox-style attributes: free-form named values, serialized in both
-    /// scene files and save-games. Never `InstanceRef` (rejected on set).
+    /// Roblox-style attributes: free-form named values (including Object /
+    /// `InstanceRef` links), serialized in both scene files and save-games.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     attributes: IndexMap<String, SavedValue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -174,7 +174,7 @@ impl World {
                 .get(&serial)
                 .copied()
                 .ok_or_else(|| CoreError::Load(format!("dangling instance ref {serial}")))?;
-            world.set_attribute(id, &name, Some(Value::InstanceRef(Some(target))))?;
+            world.set_attribute(id, &name, Value::InstanceRef(Some(target)))?;
         }
         // Restore saved tilemap grids (save games) now that props are set, so the
         // signature matches and `sync` won't regenerate over them.
@@ -290,7 +290,7 @@ fn load_instance(
         match sv {
             // Object attributes resolve after the whole tree exists.
             SavedValue::Ref(Some(serial)) => attr_fixups.push((id, aname.clone(), *serial)),
-            _ => world.set_attribute(id, aname, Some(load_value(sv)))?,
+            _ => world.set_attribute(id, aname, load_value(sv))?,
         }
     }
     for tag in &saved.tags {
@@ -424,16 +424,16 @@ mod save_tests {
     fn attributes_and_tags_round_trip_in_scene_and_save() {
         let mut w = World::new();
         let tm = w.create("Tilemap", w.workspace()).unwrap();
-        w.set_attribute(tm, "Money", Some(Value::Number(150.0))).unwrap();
-        w.set_attribute(tm, "Buildings", Some(Value::Asset("cat.buildings.json".into()))).unwrap();
-        w.set_attribute(tm, "Spawn", Some(Value::Vec2(glam::Vec2::new(3.0, 4.0)))).unwrap();
+        w.set_attribute(tm, "Money", Value::Number(150.0)).unwrap();
+        w.set_attribute(tm, "Buildings", Value::Asset("cat.buildings.json".into())).unwrap();
+        w.set_attribute(tm, "Spawn", Value::Vec2(glam::Vec2::new(3.0, 4.0))).unwrap();
         w.add_tag(tm, "main-map");
         w.add_tag(tm, "hazardous");
 
         // Object attribute: points at another instance, survives the round
         // trip through the ref-id fixup machinery.
         let cam = re_camera(&w);
-        w.set_attribute(tm, "Cam", Some(Value::InstanceRef(Some(cam)))).unwrap();
+        w.set_attribute(tm, "Cam", Value::InstanceRef(Some(cam))).unwrap();
 
         for json in [w.to_json(), w.to_save_string()] {
             let re = World::from_json(&json).unwrap();
@@ -455,7 +455,7 @@ mod save_tests {
         }
 
         // Removal really removes (and serializes as absent).
-        w.set_attribute(tm, "Money", None).unwrap();
+        w.remove_attribute(tm, "Money");
         w.remove_tag(tm, "hazardous");
         let re = World::from_json(&w.to_json()).unwrap();
         let tm2 = tilemap_of(&re);
@@ -468,7 +468,7 @@ mod save_tests {
     fn clone_and_destroy_carry_attributes_and_tags() {
         let mut w = World::new();
         let s = w.create("Sprite", w.workspace()).unwrap();
-        w.set_attribute(s, "Team", Some(Value::String("red".into()))).unwrap();
+        w.set_attribute(s, "Team", Value::String("red".into())).unwrap();
         w.add_tag(s, "unit");
 
         let sub = w.snapshot_subtree(s).unwrap();

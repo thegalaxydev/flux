@@ -134,7 +134,7 @@ impl World {
                 self.set_prop(nid, k, v.clone())?;
             }
             for (k, v) in &node.attributes {
-                self.set_attribute(nid, k, Some(v.clone()))?;
+                self.set_attribute(nid, k, v.clone())?;
             }
             for tag in &node.tags {
                 self.add_tag(nid, tag);
@@ -163,7 +163,7 @@ impl World {
                 })
                 .collect();
             for (k, nt) in attr_fixes {
-                self.set_attribute(nid, &k, Some(Value::InstanceRef(Some(nt))))?;
+                self.set_attribute(nid, &k, Value::InstanceRef(Some(nt)))?;
             }
         }
         Ok(map)

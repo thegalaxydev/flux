@@ -197,7 +197,7 @@ impl Command {
                     w.set_prop(id, prop, value.clone())?;
                 }
                 for (name, value) in attrs.iter() {
-                    w.set_attribute(id, name, Some(value.clone()))?;
+                    w.set_attribute(id, name, value.clone())?;
                 }
                 let map = created.map(|prev| RemapMap::from([(prev, id)]));
                 *created = Some(id);
@@ -244,7 +244,10 @@ impl Command {
                 Ok(None)
             }
             Command::SetAttribute { id, name, new, .. } => {
-                w.set_attribute(*id, name, new.clone())?;
+                match new.clone() {
+                    Some(v) => w.set_attribute(*id, name, v)?,
+                    None => w.remove_attribute(*id, name),
+                }
                 Ok(None)
             }
             Command::AddTag { id, tag } => {
@@ -307,7 +310,10 @@ impl Command {
                 Ok(None)
             }
             Command::SetAttribute { id, name, old, .. } => {
-                w.set_attribute(*id, name, old.clone())?;
+                match old.clone() {
+                    Some(v) => w.set_attribute(*id, name, v)?,
+                    None => w.remove_attribute(*id, name),
+                }
                 Ok(None)
             }
             Command::AddTag { id, tag } => {

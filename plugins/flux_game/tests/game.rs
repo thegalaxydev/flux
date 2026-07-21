@@ -35,9 +35,9 @@ fn scene(script_path: &str, with_catalogs: bool) -> String {
     w.set_prop(map, "TileSet", Value::Asset("test.tileset.json".into()))
         .unwrap();
     if with_catalogs {
-        w.set_attribute(map, "Buildings", Some(Value::Asset("test.buildings.json".into())))
+        w.set_attribute(map, "Buildings", Value::Asset("test.buildings.json".into()))
             .unwrap();
-        w.set_attribute(map, "Recipes", Some(Value::Asset("test.recipes.json".into())))
+        w.set_attribute(map, "Recipes", Value::Asset("test.recipes.json".into()))
             .unwrap();
     }
     let size = if with_catalogs { 16.0 } else { 8.0 };

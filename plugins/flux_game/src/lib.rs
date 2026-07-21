@@ -129,5 +129,5 @@ pub(crate) fn attr_num(w: &flux_core::World, id: flux_core::InstanceId, name: &s
 
 /// Write a numeric attribute.
 pub(crate) fn set_attr_num(w: &mut flux_core::World, id: flux_core::InstanceId, name: &str, v: f64) {
-    let _ = w.set_attribute(id, name, Some(Value::Number(v)));
+    let _ = w.set_attribute(id, name, Value::Number(v));
 }
