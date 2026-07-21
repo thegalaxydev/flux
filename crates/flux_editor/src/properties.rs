@@ -3,7 +3,7 @@ use std::path::Path;
 use eframe::egui::{self, Ui};
 use flux_core::animation::AnimationCache;
 use flux_core::{AssetType, Color, InstanceId, Rect, UDim2, Value, World, registry};
-use flux_icons::Icons;
+use flux_icons::{Icon, Icons};
 
 use crate::app::{Pending, UiState};
 use crate::asset_field::{AssetFieldAction, asset_field};
@@ -19,8 +19,18 @@ pub fn show(
 ) {
     let Some(id) = state.selection.filter(|&id| world.contains(id)) else {
         ui.weak("Nothing selected");
+        state.pick_object = None;
         return;
     };
+    // An armed Object picker only makes sense for the inspected instance, and
+    // Escape cancels it.
+    if state
+        .pick_object
+        .as_ref()
+        .is_some_and(|(h, _)| *h != id || ui.input(|i| i.key_pressed(egui::Key::Escape)))
+    {
+        state.pick_object = None;
+    }
     let class = world.class_name(id);
     ui.push_id(id, |ui| {
         egui::Grid::new("props")
@@ -48,13 +58,15 @@ pub fn show(
                 }
             });
 
-        attributes_section(ui, world, id, state);
-        tags_section(ui, world, id, state);
+        attributes_section(ui, world, id, state, icons);
+        tags_section(ui, world, id, state, icons);
     });
 }
 
 /// Free-form per-instance attributes: edit, remove, add with a type picker.
-fn attributes_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut UiState) {
+/// `Object` attributes hold an instance reference assigned via pick mode
+/// (arm the crosshair, then click a row in the Explorer).
+fn attributes_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut UiState, icons: &Icons) {
     ui.separator();
     egui::CollapsingHeader::new("Attributes").default_open(true).show(ui, |ui| {
         let attrs: Vec<(String, Value)> = world
@@ -69,7 +81,9 @@ fn attributes_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut Ui
                 .show(ui, |ui| {
                     for (name, value) in &attrs {
                         ui.label(name);
-                        if let Some((new, merge)) = value_widget(ui, world, name, value) {
+                        if let Value::InstanceRef(target) = value {
+                            object_attribute_row(ui, world, id, name, *target, state, icons);
+                        } else if let Some((new, merge)) = value_widget(ui, world, name, value) {
                             state.queue.push(Pending {
                                 cmd: Command::set_attribute(
                                     id,
@@ -80,18 +94,28 @@ fn attributes_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut Ui
                                 merge,
                             });
                         }
-                        if ui.small_button("✕").on_hover_text("Remove attribute").clicked() {
+                        if icons
+                            .icon(Icon::Remove)
+                            .size(14.0)
+                            .button(ui)
+                            .on_hover_text("Remove attribute")
+                            .clicked()
+                        {
                             state.queue.push(Pending {
                                 cmd: Command::set_attribute(id, name.clone(), Some(value.clone()), None),
                                 merge: false,
                             });
+                            if state.pick_object.as_ref().is_some_and(|(h, n)| *h == id && n == name) {
+                                state.pick_object = None;
+                            }
                         }
                         ui.end_row();
                     }
                 });
         }
-        // Add row: name + type + Add. (No InstanceRef — attributes are data.)
-        const TYPES: [&str; 8] = ["Number", "String", "Bool", "Vec2", "Color", "Rect", "UDim2", "Asset"];
+        // Add row: name + type picker + add.
+        const TYPES: [&str; 9] =
+            ["Number", "String", "Bool", "Vec2", "Color", "Rect", "UDim2", "Asset", "Object"];
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut state.attr_new_name)
@@ -107,7 +131,13 @@ fn attributes_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut Ui
                 });
             let name_ok = !state.attr_new_name.trim().is_empty()
                 && world.attribute(id, state.attr_new_name.trim()).is_none();
-            if ui.add_enabled(name_ok, egui::Button::new("Add")).clicked() {
+            let add = icons
+                .icon(Icon::Add)
+                .size(14.0)
+                .disabled(!name_ok)
+                .button(ui)
+                .on_hover_text("Add attribute");
+            if add.clicked() && name_ok {
                 let default = match state.attr_new_ty {
                     0 => Value::Number(0.0),
                     1 => Value::String(String::new()),
@@ -116,7 +146,8 @@ fn attributes_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut Ui
                     4 => Value::Color(Color::new(1.0, 1.0, 1.0, 1.0)),
                     5 => Value::Rect(Rect::new(0.0, 0.0, 0.0, 0.0)),
                     6 => Value::UDim2(UDim2::new(0.0, 0.0, 0.0, 0.0)),
-                    _ => Value::Asset(String::new()),
+                    7 => Value::Asset(String::new()),
+                    _ => Value::InstanceRef(None),
                 };
                 state.queue.push(Pending {
                     cmd: Command::set_attribute(
@@ -133,15 +164,77 @@ fn attributes_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut Ui
     });
 }
 
+/// An `Object` attribute row: the current target plus a pick toggle (click,
+/// then click an Explorer row to assign) and a clear button.
+#[allow(clippy::too_many_arguments)]
+fn object_attribute_row(
+    ui: &mut Ui,
+    world: &World,
+    id: InstanceId,
+    name: &str,
+    target: Option<InstanceId>,
+    state: &mut UiState,
+    icons: &Icons,
+) {
+    ui.horizontal(|ui| {
+        let picking = state.pick_object.as_ref().is_some_and(|(h, n)| *h == id && n == name);
+        let live = target.filter(|t| world.contains(*t));
+        match live {
+            Some(t) => ui.label(world.name(t).unwrap_or("?")),
+            None if target.is_some() => ui.weak("<destroyed>"),
+            None => ui.weak(if picking { "click in Explorer…" } else { "nil" }),
+        };
+        let pick = icons
+            .icon(Icon::Search)
+            .size(14.0)
+            .button(ui)
+            .on_hover_text("Pick: click an object in the Explorer");
+        if picking {
+            // Armed: highlight the toggle until an Explorer row is clicked.
+            ui.painter().rect_stroke(
+                pick.rect.expand(1.0),
+                2.0,
+                ui.visuals().selection.stroke,
+                egui::StrokeKind::Outside,
+            );
+        }
+        if pick.clicked() {
+            state.pick_object = if picking { None } else { Some((id, name.to_string())) };
+        }
+        if live.is_some() || target.is_some() {
+            if icons
+                .icon(Icon::Close)
+                .size(14.0)
+                .button(ui)
+                .on_hover_text("Clear (keep the attribute, point at nothing)")
+                .clicked()
+            {
+                state.queue.push(Pending {
+                    cmd: Command::set_attribute(
+                        id,
+                        name.to_string(),
+                        Some(Value::InstanceRef(target)),
+                        Some(Value::InstanceRef(None)),
+                    ),
+                    merge: false,
+                });
+            }
+        }
+    });
+}
+
 /// CollectionService-style tags: chips with remove, plus an add field.
-fn tags_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut UiState) {
+fn tags_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut UiState, icons: &Icons) {
     egui::CollapsingHeader::new("Tags").default_open(true).show(ui, |ui| {
         let tags: Vec<String> = world.tags(id).map(str::to_string).collect();
         if !tags.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 for tag in &tags {
-                    if ui
-                        .button(format!("{tag}  ✕"))
+                    ui.label(tag);
+                    if icons
+                        .icon(Icon::Close)
+                        .size(12.0)
+                        .button(ui)
                         .on_hover_text("Remove tag")
                         .clicked()
                     {
@@ -150,6 +243,7 @@ fn tags_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut UiState)
                             merge: false,
                         });
                     }
+                    ui.add_space(6.0);
                 }
             });
         }
@@ -161,7 +255,13 @@ fn tags_section(ui: &mut Ui, world: &World, id: InstanceId, state: &mut UiState)
             );
             let tag = state.tag_new.trim().to_string();
             let ok = !tag.is_empty() && !world.has_tag(id, &tag);
-            if ui.add_enabled(ok, egui::Button::new("Add tag")).clicked() {
+            let add = icons
+                .icon(Icon::Add)
+                .size(14.0)
+                .disabled(!ok)
+                .button(ui)
+                .on_hover_text("Add tag");
+            if add.clicked() && ok {
                 state.queue.push(Pending {
                     cmd: Command::AddTag { id, tag },
                     merge: false,

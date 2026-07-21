@@ -33,7 +33,9 @@ impl Subtree {
             if let Some(new) = map.get(&node.old_id) {
                 node.old_id = *new;
             }
-            for (_, value) in node.props.iter_mut() {
+            let prop_values = node.props.iter_mut().map(|(_, v)| v);
+            let attr_values = node.attributes.iter_mut().map(|(_, v)| v);
+            for value in prop_values.chain(attr_values) {
                 if let Value::InstanceRef(Some(target)) = value {
                     if let Some(new) = map.get(target) {
                         *target = *new;
@@ -150,6 +152,18 @@ impl World {
                 .collect();
             for (k, nt) in fixes {
                 self.set_prop(nid, k, Value::InstanceRef(Some(nt)))?;
+            }
+            // Object attributes pointing INSIDE the copied subtree follow the
+            // copy; refs to outside instances are left pointing at the originals.
+            let attr_fixes: Vec<(String, InstanceId)> = self
+                .attributes(nid)
+                .filter_map(|(k, v)| match v {
+                    Value::InstanceRef(Some(t)) => map.get(t).map(|nt| (k.to_string(), *nt)),
+                    _ => None,
+                })
+                .collect();
+            for (k, nt) in attr_fixes {
+                self.set_attribute(nid, &k, Some(Value::InstanceRef(Some(nt))))?;
             }
         }
         Ok(map)

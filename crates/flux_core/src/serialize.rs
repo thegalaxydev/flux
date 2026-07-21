@@ -115,7 +115,9 @@ impl World {
         let mut ref_ids: HashMap<InstanceId, u64> = HashMap::new();
         let mut next = 0u64;
         for id in self.descendants(self.root()) {
-            for (_, value) in self.props(id) {
+            let prop_refs = self.props(id).map(|(_, v)| v);
+            let attr_refs = self.attributes(id).map(|(_, v)| v);
+            for value in prop_refs.chain(attr_refs) {
                 if let Value::InstanceRef(Some(target)) = value {
                     if self.contains(*target) && !ref_ids.contains_key(target) {
                         ref_ids.insert(*target, next);
@@ -146,6 +148,7 @@ impl World {
         let mut world = World::empty_game();
         let mut refs: HashMap<u64, InstanceId> = HashMap::new();
         let mut fixups: Vec<(InstanceId, &'static str, u64)> = Vec::new();
+        let mut attr_fixups: Vec<(InstanceId, String, u64)> = Vec::new();
         let mut tiles: Vec<(InstanceId, SavedTiles)> = Vec::new();
         let mut comps: Vec<(InstanceId, IndexMap<String, serde_json::Value>)> = Vec::new();
         let root = world.root();
@@ -155,6 +158,7 @@ impl World {
             root,
             &mut refs,
             &mut fixups,
+            &mut attr_fixups,
             &mut tiles,
             &mut comps,
         )?;
@@ -164,6 +168,13 @@ impl World {
                 .copied()
                 .ok_or_else(|| CoreError::Load(format!("dangling instance ref {serial}")))?;
             world.set_prop(id, prop, Value::InstanceRef(Some(target)))?;
+        }
+        for (id, name, serial) in attr_fixups {
+            let target = refs
+                .get(&serial)
+                .copied()
+                .ok_or_else(|| CoreError::Load(format!("dangling instance ref {serial}")))?;
+            world.set_attribute(id, &name, Some(Value::InstanceRef(Some(target))))?;
         }
         // Restore saved tilemap grids (save games) now that props are set, so the
         // signature matches and `sync` won't regenerate over them.
@@ -249,12 +260,14 @@ fn save_value(value: &Value, ref_ids: &HashMap<InstanceId, u64>) -> SavedValue {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_instance(
     world: &mut World,
     saved: &SavedInstance,
     id: InstanceId,
     refs: &mut HashMap<u64, InstanceId>,
     fixups: &mut Vec<(InstanceId, &'static str, u64)>,
+    attr_fixups: &mut Vec<(InstanceId, String, u64)>,
     tiles: &mut Vec<(InstanceId, SavedTiles)>,
     comps: &mut Vec<(InstanceId, IndexMap<String, serde_json::Value>)>,
 ) -> Result<(), CoreError> {
@@ -274,9 +287,10 @@ fn load_instance(
         }
     }
     for (aname, sv) in &saved.attributes {
-        // Attributes never hold refs; anything else loads verbatim.
-        if !matches!(sv, SavedValue::Ref(_)) {
-            world.set_attribute(id, aname, Some(load_value(sv)))?;
+        match sv {
+            // Object attributes resolve after the whole tree exists.
+            SavedValue::Ref(Some(serial)) => attr_fixups.push((id, aname.clone(), *serial)),
+            _ => world.set_attribute(id, aname, Some(load_value(sv)))?,
         }
     }
     for tag in &saved.tags {
@@ -293,7 +307,7 @@ fn load_instance(
             .find(resolve_legacy_class(&child.class))
             .ok_or_else(|| CoreError::UnknownClass(child.class.clone()))?;
         let cid = world.spawn_raw(cclass, id);
-        load_instance(world, child, cid, refs, fixups, tiles, comps)?;
+        load_instance(world, child, cid, refs, fixups, attr_fixups, tiles, comps)?;
     }
     Ok(())
 }
@@ -387,7 +401,6 @@ fn migrate_legacy_animation(world: &mut World) {
 
 #[cfg(test)]
 mod save_tests {
-    use crate::error::CoreError;
     use crate::tilemap::{self, TileSetCache, WorldGenCache};
     use crate::value::Value;
     use crate::world::World;
@@ -397,6 +410,13 @@ mod save_tests {
         w.descendants(w.workspace())
             .into_iter()
             .find(|&id| w.class_name(id) == Some("Tilemap"))
+            .unwrap()
+    }
+
+    fn re_camera(w: &World) -> crate::world::InstanceId {
+        w.descendants(w.workspace())
+            .into_iter()
+            .find(|&id| w.class_name(id) == Some("Camera2D"))
             .unwrap()
     }
 
@@ -410,11 +430,10 @@ mod save_tests {
         w.add_tag(tm, "main-map");
         w.add_tag(tm, "hazardous");
 
-        // InstanceRef attributes are rejected outright.
-        assert!(matches!(
-            w.set_attribute(tm, "Link", Some(Value::InstanceRef(None))),
-            Err(CoreError::AttributeNotData)
-        ));
+        // Object attribute: points at another instance, survives the round
+        // trip through the ref-id fixup machinery.
+        let cam = re_camera(&w);
+        w.set_attribute(tm, "Cam", Some(Value::InstanceRef(Some(cam)))).unwrap();
 
         for json in [w.to_json(), w.to_save_string()] {
             let re = World::from_json(&json).unwrap();
@@ -427,6 +446,12 @@ mod save_tests {
             assert_eq!(re.attribute(tm2, "Spawn"), Some(&Value::Vec2(glam::Vec2::new(3.0, 4.0))));
             assert!(re.has_tag(tm2, "main-map") && re.has_tag(tm2, "hazardous"));
             assert_eq!(re.tagged("main-map"), vec![tm2]);
+            let cam2 = re_camera(&re);
+            assert_eq!(
+                re.attribute(tm2, "Cam"),
+                Some(&Value::InstanceRef(Some(cam2))),
+                "object attribute must re-link to the reloaded target"
+            );
         }
 
         // Removal really removes (and serializes as absent).

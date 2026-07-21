@@ -270,9 +270,9 @@ impl World {
         self.attributes.get(id)?.get(name)
     }
 
-    /// Set (`Some`) or remove (`None`) an attribute. Attributes are plain
-    /// data: `InstanceRef` values are rejected (use tags or declared props to
-    /// link instances).
+    /// Set (`Some`) or remove (`None`) an attribute. `InstanceRef` values are
+    /// allowed ("Object" attributes) — readers should treat a destroyed
+    /// target like `None` (the ref is not cleared retroactively).
     pub fn set_attribute(
         &mut self,
         id: InstanceId,
@@ -286,7 +286,6 @@ impl World {
             return Err(CoreError::BadAttributeName);
         }
         match value {
-            Some(Value::InstanceRef(_)) => Err(CoreError::AttributeNotData),
             Some(v) => {
                 self.attributes
                     .entry(id)

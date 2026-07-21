@@ -187,7 +187,7 @@ impl UserData for LuaInstance {
                 LuaValue::Nil => None,
                 v => Some(infer_value(v).ok_or_else(|| {
                     mlua::Error::RuntimeError(format!(
-                        "SetAttribute: unsupported value type '{}' (attributes hold plain data)",
+                        "SetAttribute: unsupported value type '{}'",
                         v.type_name()
                     ))
                 })?),
@@ -686,8 +686,8 @@ fn value_to_lua(lua: &Lua, w: &World, v: &Value) -> mlua::Result<LuaValue> {
 }
 
 /// Infer a [`Value`] from an arbitrary Lua value — the attribute path, where
-/// no declared type exists. `InstanceRef` is deliberately not inferable:
-/// attributes are data, not links.
+/// no declared type exists. Instances become Object attributes
+/// (`InstanceRef`).
 fn infer_value(v: &LuaValue) -> Option<Value> {
     match v {
         LuaValue::Boolean(b) => Some(Value::Bool(*b)),
@@ -698,7 +698,8 @@ fn infer_value(v: &LuaValue) -> Option<Value> {
             .map(Value::Vec2)
             .or_else(|| as_color(v).map(Value::Color))
             .or_else(|| as_udim2(v).map(Value::UDim2))
-            .or_else(|| as_rect(v).map(Value::Rect)),
+            .or_else(|| as_rect(v).map(Value::Rect))
+            .or_else(|| as_instance(v).map(|i| Value::InstanceRef(Some(i.0)))),
     }
 }
 

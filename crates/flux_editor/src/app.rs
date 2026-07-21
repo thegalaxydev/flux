@@ -85,6 +85,9 @@ pub struct UiState {
     pub attr_new_ty: usize,
     /// New-tag entry buffer in the properties panel.
     pub tag_new: String,
+    /// Armed Object-attribute picker: `(holder, attribute)` — the next click
+    /// on an Explorer row assigns that instance instead of selecting it.
+    pub pick_object: Option<(InstanceId, String)>,
     /// An asset being renamed in the Assets panel: `(relative path, edit buffer)`.
     pub asset_rename: Option<(String, String)>,
     /// An asset pending delete confirmation (relative path).
@@ -117,6 +120,7 @@ impl Default for UiState {
             attr_new_name: String::new(),
             attr_new_ty: 0,
             tag_new: String::new(),
+            pick_object: None,
             asset_rename: None,
             asset_delete: None,
         }

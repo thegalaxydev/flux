@@ -275,6 +275,25 @@ fn interact(ui: &mut Ui, world: &World, state: &mut UiState, rows: &[Row]) {
     if pressed {
         if let Some(o) = origin.or(pointer) {
             match row_at(o) {
+                // Object-attribute pick mode: the next explorer click assigns
+                // the clicked instance instead of selecting it.
+                Some(row) if state.pick_object.is_some() => {
+                    if let Some((holder, name)) = state.pick_object.take() {
+                        if world.contains(holder) {
+                            let old = world.attribute(holder, &name).cloned();
+                            state.queue.push(crate::app::Pending {
+                                cmd: crate::command::Command::set_attribute(
+                                    holder,
+                                    name,
+                                    old,
+                                    Some(flux_core::Value::InstanceRef(Some(row.id))),
+                                ),
+                                merge: false,
+                            });
+                        }
+                    }
+                    state.explorer.press = None;
+                }
                 Some(row) if row.caret.is_some_and(|c| c.contains(o)) => {
                     toggle(&mut state.explorer.collapsed, row.id);
                     state.explorer.press = None;

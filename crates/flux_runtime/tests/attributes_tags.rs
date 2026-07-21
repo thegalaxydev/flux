@@ -33,10 +33,15 @@ print("tag query " .. tostring(#tagged == 1 and tagged[1] == ws))
 ws:RemoveTag("zone")
 print("tag removed " .. tostring(not ws:HasTag("zone")))
 
-local ok = pcall(function()
-	ws:SetAttribute("Bad", ws)
-end)
-print("attr refuses instance " .. tostring(not ok))
+-- Object attributes point at instances; a destroyed target reads as nil.
+local cam = ws:FindFirstChild("Camera")
+ws:SetAttribute("MainCamera", cam)
+print("attr object " .. tostring(cam ~= nil and ws:GetAttribute("MainCamera") == cam))
+local temp = cam:Clone()
+temp.Parent = ws
+ws:SetAttribute("Doomed", temp)
+temp:Destroy()
+print("attr object dangling " .. tostring(ws:GetAttribute("Doomed") == nil))
 "#;
 
 fn scene(script_rel: &str) -> String {
@@ -46,7 +51,9 @@ fn scene(script_rel: &str) -> String {
   "root": {{
     "class": "Game", "name": "Game",
     "children": [
-      {{ "class": "Workspace", "name": "Workspace" }},
+      {{ "class": "Workspace", "name": "Workspace", "children": [
+        {{ "class": "Camera2D", "name": "Camera" }}
+      ] }},
       {{ "class": "Storage", "name": "Storage" }},
       {{ "class": "Gui", "name": "Gui" }},
       {{ "class": "Scripts", "name": "Scripts", "children": [
@@ -70,8 +77,10 @@ fn lua_attributes_and_tags_work() {
     let logs: Vec<String> = session
         .drain_logs()
         .into_iter()
-        .filter(|l| l.level == LogLevel::Info)
-        .map(|l| l.message)
+        .map(|l| match l.level {
+            LogLevel::Info => l.message,
+            other => format!("[{other:?}] {}", l.message),
+        })
         .collect();
     let has = |s: &str| logs.iter().any(|m| m == s);
     assert!(has("attr num 42"), "{logs:?}");
@@ -82,7 +91,8 @@ fn lua_attributes_and_tags_work() {
     assert!(has("tag has true"), "{logs:?}");
     assert!(has("tag query true"), "{logs:?}");
     assert!(has("tag removed true"), "{logs:?}");
-    assert!(has("attr refuses instance true"), "{logs:?}");
+    assert!(has("attr object true"), "{logs:?}");
+    assert!(has("attr object dangling true"), "{logs:?}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
