@@ -79,6 +79,12 @@ fn lua_building_placement_and_camera_conversion() {
     assert!(has("removed true"), "RemoveBuilding: {logs:?}");
     assert!(has("gone true"), "cell freed: {logs:?}");
     assert!(has("cam true"), "ScreenToWorld/WorldToScreen: {logs:?}");
+    assert!(has("beltdir true"), "PlaceBuilding direction: {logs:?}");
+    assert!(has("ghost true"), "SetGhost shows: {logs:?}");
+    assert!(has("ghostfree true"), "ghost isn't a building: {logs:?}");
+    assert!(has("ghostgone true"), "SetGhost(nil) clears: {logs:?}");
+    assert!(has("sel true"), "_Selected accepts an instance: {logs:?}");
+    assert!(has("selnil true"), "_Selected accepts nil: {logs:?}");
 }
 
 #[test]

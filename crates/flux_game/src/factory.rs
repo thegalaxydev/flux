@@ -481,6 +481,19 @@ pub struct FlowLog {
     pub events: Vec<FlowEvent>,
 }
 
+/// The cells a directional building's front edge points at.
+fn front_cells(world: &World, b: InstanceId) -> Vec<(i32, i32)> {
+    let (c, r) = cell(world, b);
+    let (w, h) = footprint(world, b);
+    let dir = num(world, b, "Direction") as u8;
+    match dir % 4 {
+        0 => (0..h).map(|i| (c + w, r + i)).collect(),
+        1 => (0..w).map(|i| (c + i, r + h)).collect(),
+        2 => (0..h).map(|i| (c - 1, r + i)).collect(),
+        _ => (0..w).map(|i| (c + i, r - 1)).collect(),
+    }
+}
+
 /// Absolute world-space centre of a building's footprint on its tilemap.
 fn world_centre(world: &World, tilemap: InstanceId, b: InstanceId) -> glam::Vec2 {
     let map_pos = match world.get_prop(tilemap, "Position") {
@@ -500,6 +513,10 @@ fn world_centre(world: &World, tilemap: InstanceId, b: InstanceId) -> glam::Vec2
 }
 
 /// Returns every building that sent or received an item this frame.
+///
+/// Logistics require conveyors: producers only hand items to adjacent belts,
+/// belts push along their `Direction` into whatever they point at (another
+/// belt, or a consumer that accepts the item), and stores/consumers never give.
 fn transport(
     world: &mut World,
     tilemap: InstanceId,
@@ -521,8 +538,15 @@ fn transport(
 
     let mut moves: Vec<(InstanceId, InstanceId, String, u32)> = Vec::new();
     for &b in ids {
-        let def_rate = cat.get(&text(world, b, "Type")).map(|d| d.rate).unwrap_or(1.0);
-        let (n, acc) = ticks(num(world, b, "_Flow"), def_rate.max(1.0), dt);
+        let Some(def) = cat.get(&text(world, b, "Type")) else {
+            continue;
+        };
+        // Only belts and producers emit items; stores/consumers just hold them.
+        let is_producer = def.mines || def.recipe.is_some();
+        if !def.directional && !is_producer {
+            continue;
+        }
+        let (n, acc) = ticks(num(world, b, "_Flow"), def.rate.max(1.0), dt);
         set_num(world, b, "_Flow", acc);
         if n == 0 {
             continue;
@@ -545,13 +569,38 @@ fn transport(
         }
         let (c, r) = cell(world, b);
         let (w, h) = footprint(world, b);
-        let neighbours = edge_neighbours(&occupancy, b, c, r, w, h);
+        let targets: Vec<InstanceId> = if def.directional {
+            // A belt feeds exactly the building its front edge points at.
+            let mut out = Vec::new();
+            for cell in front_cells(world, b) {
+                if let Some(&t) = occupancy.get(&cell) {
+                    if t != b && !out.contains(&t) {
+                        out.push(t);
+                    }
+                }
+            }
+            out
+        } else {
+            // Producers dump onto adjacent conveyors — but never onto one that
+            // points back INTO them (their own feeder), or the feeder becomes
+            // an output trap it can never empty.
+            edge_neighbours(&occupancy, b, c, r, w, h)
+                .into_iter()
+                .filter(|&nb| {
+                    cat.get(&text(world, nb, "Type")).is_some_and(|d| d.directional)
+                        && !front_cells(world, nb)
+                            .iter()
+                            .any(|cell| occupancy.get(cell) == Some(&b))
+                })
+                .collect()
+        };
+
         let mut budget = n;
         for (item, _have) in givable {
             if budget == 0 {
                 break;
             }
-            for &nb in &neighbours {
+            for &nb in &targets {
                 if budget == 0 {
                     break;
                 }
@@ -632,6 +681,10 @@ fn accepts(
     let Some(def) = cat.get(&text(world, nb, "Type")) else {
         return false;
     };
+    // Conveyors relay anything (space permitting).
+    if def.directional {
+        return true;
+    }
     if def.stores {
         return true;
     }

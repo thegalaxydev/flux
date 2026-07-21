@@ -97,10 +97,21 @@ pub(crate) fn overlay(painter: &Painter, world: &World, ctx: &RenderCtx) {
                 continue;
             }
 
+            let selected = matches!(
+                world.get_prop(tm, "_Selected"),
+                Some(Value::InstanceRef(Some(s))) if *s == bid
+            );
+            if selected {
+                // Selection highlight: a bright footprint outline (drawn over
+                // the sprite on purpose — it's a UI adornment).
+                painter.add(Shape::closed_line(
+                    quad.clone(),
+                    Stroke::new(2.0, Color32::from_rgb(255, 210, 80)),
+                ));
+            }
             if crate::building::sprite_of(world, bid).is_some() {
-                // The engine draws the animated sprite; just ground it with a
-                // faint footprint outline.
-                painter.add(Shape::closed_line(quad, Stroke::new(1.0, Color32::from_black_alpha(70))));
+                // The engine draws the sprite; nothing else to add. (No
+                // always-on outline: it would cut across neighbouring art.)
             } else {
                 // No art: legacy flat diamond in the catalog colour.
                 let color = match world.get_prop(bid, "Color") {

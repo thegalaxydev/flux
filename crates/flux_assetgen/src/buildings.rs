@@ -107,8 +107,8 @@ fn control_room() -> BuildingArt {
         let (ax, ay) = iso::proj(1.5, 1.5);
         let (mx, my) = (fr.ox + ax, fr.oy + ay - 46.0);
         c.line(mx, my, mx, my - 16.0, STEEL_DARK);
-        lamp(&mut c, mx, my - 17.0, LAMP_RED, beacon);
         c.outline();
+        lamp(&mut c, mx, my - 17.0, LAMP_RED, beacon);
         c
     };
     BuildingArt {
@@ -136,25 +136,17 @@ fn reactor() -> BuildingArt {
         let body = if cracked { shade(CONCRETE, 0.7) } else { CONCRETE };
         cylinder(&mut c, cx, cy + 6.0, 68.0, |_| 50.0, body);
         dome(&mut c, cx, cy - 62.0, 50.0, body);
-        // Glow ring where the vessel meets the dome.
-        if let Some(g) = glow_color {
-            glow(&mut c, cx, cy - 60.0, 56.0, 17.0, g, 0.55 + 0.45 * pulse);
-            // Vent slits picking up the glow.
-            for i in 0..5 {
-                let vx = cx - 30.0 + i as f32 * 15.0;
-                c.fill_poly(
-                    &[(vx, cy - 46.0), (vx + 6.0, cy - 43.0), (vx + 6.0, cy - 37.0), (vx, cy - 40.0)],
-                    lerp(WINDOW_DARK, g, 0.35 + 0.55 * pulse),
-                );
-            }
-        } else {
-            for i in 0..5 {
-                let vx = cx - 30.0 + i as f32 * 15.0;
-                c.fill_poly(
-                    &[(vx, cy - 46.0), (vx + 6.0, cy - 43.0), (vx + 6.0, cy - 37.0), (vx, cy - 40.0)],
-                    WINDOW_DARK,
-                );
-            }
+        // Vent slits (solid — they pick up the glow colour when lit).
+        for i in 0..5 {
+            let vx = cx - 30.0 + i as f32 * 15.0;
+            let vent = match glow_color {
+                Some(g) => lerp(WINDOW_DARK, g, 0.35 + 0.55 * pulse),
+                None => WINDOW_DARK,
+            };
+            c.fill_poly(
+                &[(vx, cy - 46.0), (vx + 6.0, cy - 43.0), (vx + 6.0, cy - 37.0), (vx, cy - 40.0)],
+                vent,
+            );
         }
         if cracked {
             let dark = shade(CONCRETE, 0.3);
@@ -164,12 +156,17 @@ fn reactor() -> BuildingArt {
         }
         // Beacon mast on the dome crown.
         c.line(cx, cy - 92.0, cx, cy - 101.0, STEEL_DARK);
+        // Outline the solid structure only — soft effects (glow, halos) come
+        // after, or their alpha edges grow ugly dark rims.
+        c.outline();
+        if let Some(g) = glow_color {
+            glow(&mut c, cx, cy - 60.0, 56.0, 17.0, g, 0.55 + 0.45 * pulse);
+        }
         if let Some(b) = beacon {
             lamp(&mut c, cx, cy - 102.0, b, true);
         } else {
             lamp(&mut c, cx, cy - 102.0, LAMP_RED, false);
         }
-        c.outline();
         c
     };
 
@@ -220,10 +217,10 @@ fn cooling_tower() -> BuildingArt {
             let d = (nx * nx + ny * ny).sqrt();
             if d > 0.62 { with_alpha(CONCRETE_DARK, 0) } else { shade(WINDOW_DARK, 1.1) }
         });
+        c.outline();
         if let Some(p) = steam_phase {
             iso::plume(&mut c, cx, cy - 96.0, p, STEAM);
         }
-        c.outline();
         c
     };
 
@@ -268,10 +265,10 @@ fn turbine() -> BuildingArt {
         // Exhaust stack rising through the roof at the far corner.
         let (sx, sy) = iso::proj(0.55, 0.55);
         cylinder(&mut c, fr.ox + sx, fr.oy + sy, 52.0, |_| 4.5, STEEL_DARK);
+        c.outline();
         if let Some(phase) = rotor {
             puffs(&mut c, fr.ox + sx, fr.oy + sy - 54.0, phase, STEAM, 3, 20.0, 0.9);
         }
-        c.outline();
         c
     };
     BuildingArt {
@@ -303,17 +300,17 @@ fn smelter() -> BuildingArt {
             None => WINDOW_DARK,
         };
         c.fill_poly(&[(mx - 7.0, my - 4.0), (mx + 7.0, my + 3.0), (mx + 7.0, my + 9.0), (mx - 7.0, my + 2.0)], mouth);
-        if fire.is_some() {
-            glow(&mut c, mx, my + 2.0, 12.0, 8.0, FIRE, 0.6);
-        }
         // Chimney at the back corner.
         let (chx, chy) = iso::proj(1.55, 0.4);
         cylinder(&mut c, fr.ox + chx, fr.oy + chy - 18.0, 40.0, |t| 5.0 + t * 1.5, CONCRETE_DARK);
+        c.outline();
+        if fire.is_some() {
+            glow(&mut c, mx, my + 2.0, 12.0, 8.0, FIRE, 0.6);
+        }
         if let Some(p) = fire {
             puffs(&mut c, fr.ox + chx, fr.oy + chy - 58.0, p, SMOKE, 3, 24.0, 1.3);
         }
         lamp(&mut c, fr.ox + iso::proj(1.85, 1.85).0, fr.oy + iso::proj(1.85, 1.85).1 - 28.0, LAMP_AMBER, warn);
-        c.outline();
         c
     };
     BuildingArt {
@@ -362,6 +359,7 @@ fn miner() -> BuildingArt {
         }
         // Drill tip biting into the ground.
         c.fill_poly(&[(cx - r, bot), (cx + r, bot), (cx, bot + 8.0)], STEEL_DARK);
+        c.outline();
         if spin.is_some() {
             let mut rng = Rng::new(9 + phase as u32);
             for _ in 0..8 {
@@ -371,7 +369,6 @@ fn miner() -> BuildingArt {
             }
         }
         lamp(&mut c, cx + 39.0, cy - 33.0, LAMP_AMBER, warn);
-        c.outline();
         c
     };
     BuildingArt {
@@ -391,15 +388,26 @@ fn miner() -> BuildingArt {
 fn belt() -> BuildingArt {
     let (fw, fd) = (1.0, 1.0);
     let fr = frame_for(fw, fd, 10.0);
+    // Authored pointing +x (screen lower-right); the game derives the other
+    // three directions with FlipX/FlipY, so the art must stay mirror-clean.
     let render = |phase: f32| {
         let mut c = base(&fr, fw, fd);
-        IsoBox { tx: 0.08, ty: 0.08, w: 0.84, d: 0.84, h: 4.0, color: STEEL_DARK }.draw(&mut c, fr.ox, fr.oy);
-        // Roller ridges across the top plate, scrolling with `phase`.
-        for i in 0..4 {
-            let t = ((i as f32 + phase) % 4.0) / 4.0;
-            let (sx, sy) = iso::proj(0.08 + 0.84 * t, 0.08);
-            let (ex, ey) = iso::proj(0.08 + 0.84 * t, 0.92);
-            c.line(fr.ox + sx, fr.oy + sy - 4.0, fr.ox + ex, fr.oy + ey - 4.0, shade(STEEL, 1.2));
+        IsoBox { tx: 0.06, ty: 0.14, w: 0.88, d: 0.72, h: 4.0, color: STEEL_DARK }.draw(&mut c, fr.ox, fr.oy);
+        // Chevrons marching along +x on the top plate.
+        let p = |tx: f32, ty: f32| {
+            let (x, y) = iso::proj(tx, ty);
+            (fr.ox + x, fr.oy + y - 4.0)
+        };
+        let arrow = shade(LAMP_AMBER, 1.0);
+        for i in 0..3 {
+            let t = 0.12 + ((i as f32 + phase * 0.25) % 3.0) * 0.27;
+            if t > 0.82 {
+                continue;
+            }
+            let tip = p(t + 0.16, 0.5);
+            let (a, b) = (p(t, 0.26), p(t, 0.74));
+            c.line(a.0, a.1, tip.0, tip.1, arrow);
+            c.line(b.0, b.1, tip.0, tip.1, arrow);
         }
         c.outline();
         c
@@ -424,9 +432,9 @@ fn storage() -> BuildingArt {
         let mut c = base(&fr, fw, fd);
         IsoBox { tx: 0.1, ty: 0.1, w: 0.8, d: 0.8, h: 12.0, color: WOOD }.draw(&mut c, fr.ox, fr.oy);
         IsoBox { tx: 0.25, ty: 0.2, w: 0.5, d: 0.5, h: 10.0, color: shade(WOOD, 1.15) }.draw(&mut c, fr.ox, fr.oy - 12.0);
+        c.outline();
         let (lx, ly) = iso::proj(0.9, 0.9);
         lamp(&mut c, fr.ox + lx, fr.oy + ly - 16.0, LAMP_GREEN, rx);
-        c.outline();
         c
     };
     BuildingArt {

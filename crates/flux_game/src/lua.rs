@@ -56,7 +56,7 @@ pub(crate) fn install() {
     });
 
     api::register_method("PlaceBuilding", |lua, id, args| {
-        let (ty, col, row) = <(String, i32, i32)>::from_lua_multi(args, lua)?;
+        let (ty, col, row, dir) = <(String, i32, i32, Option<u8>)>::from_lua_multi(args, lua)?;
         let cat = {
             let rc = api::world(lua);
             let w = rc.borrow();
@@ -71,9 +71,37 @@ pub(crate) fn install() {
             .ok_or_else(|| err(format!("PlaceBuilding: unknown building '{ty}'")))?;
         let rc = api::world(lua);
         let mut w = rc.borrow_mut();
-        building::place(&mut w, id, def, col, row)
+        building::place(&mut w, id, def, col, row, dir.unwrap_or(0))
             .map(LuaInstance)
             .into_lua_multi(lua)
+    });
+
+    // SetGhost(type, col, row, dir?) shows/moves the translucent placement
+    // preview; SetGhost() (or nil) clears it.
+    api::register_method("SetGhost", |lua, id, args| {
+        let (ty, col, row, dir) =
+            <(Option<String>, Option<i32>, Option<i32>, Option<u8>)>::from_lua_multi(args, lua)?;
+        let cat = {
+            let rc = api::world(lua);
+            let w = rc.borrow();
+            if !is_tilemap(&w, id) {
+                return Err(err("SetGhost can only be called on a Tilemap"));
+            }
+            catalog_of(lua, &w, id)
+        };
+        let rc = api::world(lua);
+        let mut w = rc.borrow_mut();
+        match (ty, col, row) {
+            (Some(ty), Some(col), Some(row)) => {
+                let def = cat
+                    .as_ref()
+                    .and_then(|c| c.get(&ty))
+                    .ok_or_else(|| err(format!("SetGhost: unknown building '{ty}'")))?;
+                building::set_ghost(&mut w, id, Some((def, col, row, dir.unwrap_or(0))));
+            }
+            _ => building::set_ghost(&mut w, id, None),
+        }
+        ().into_lua_multi(lua)
     });
 
     api::register_method("BuildingTypes", |lua, id, args| {
@@ -91,6 +119,7 @@ pub(crate) fn install() {
                 entry.set("name", def.name.clone())?;
                 entry.set("category", def.category.clone())?;
                 entry.set("cost", def.cost)?;
+                entry.set("directional", def.directional)?;
                 list.push(entry)?;
             }
         }

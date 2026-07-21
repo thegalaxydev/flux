@@ -64,6 +64,8 @@ fn install_classes() {
             prop("Type", Value::String(String::new())),
             prop("Cell", Value::Vec2(Vec2::ZERO)),
             prop("Footprint", Value::Vec2(Vec2::ONE)),
+            // Flow direction for directional buildings: 0=+x, 1=+y, 2=-x, 3=-y.
+            prop("Direction", Value::Number(0.0)),
             prop("Color", Value::Color(Color::WHITE)),
             prop("Recipe", Value::String(String::new())),
             prop_t("_Timer", Value::Number(0.0)),
@@ -88,6 +90,9 @@ fn install_classes() {
             asset_prop("Recipes", AssetType::Custom("recipes")),
             prop_t("_PowerProduced", Value::Number(0.0)),
             prop_t("_PowerConsumed", Value::Number(0.0)),
+            // The building the player currently has selected (game UI reads and
+            // writes this; the overlay draws its highlight).
+            prop_t("_Selected", Value::InstanceRef(None)),
             // Player's money for this map's economy (persisted in saves). The
             // engine ignores it; the game reads/writes it and charges for builds.
             prop("Money", Value::Number(200.0)),

@@ -54,6 +54,10 @@ pub struct BuildingDoc {
     /// (cooling towers). 0 = none.
     #[serde(default)]
     pub cooling: f32,
+    /// Directional building (conveyors): carries a `Direction` (0=+x, 1=+y,
+    /// 2=-x, 3=-y) and only hands items to the building it points at.
+    #[serde(default)]
+    pub directional: bool,
     /// Money cost to place this building (enforced by the game, not the engine).
     #[serde(default)]
     pub cost: f32,
@@ -150,9 +154,20 @@ pub struct BuildingDef {
     pub stores: bool,
     pub power_use: f32,
     pub cooling: f32,
+    pub directional: bool,
     pub cost: f32,
     pub sprite: Option<SpriteArt>,
     pub reactor: Option<ReactorParams>,
+}
+
+/// Tile-space offset for a `Direction` value (0=+x, 1=+y, 2=-x, 3=-y).
+pub fn dir_offset(dir: u8) -> (i32, i32) {
+    match dir % 4 {
+        0 => (1, 0),
+        1 => (0, 1),
+        2 => (-1, 0),
+        _ => (0, -1),
+    }
 }
 
 /// Animated-sprite art for a building type.
@@ -207,6 +222,7 @@ impl BuildingCatalog {
                     stores: b.stores,
                     power_use: b.power_use.max(0.0),
                     cooling: b.cooling.max(0.0),
+                    directional: b.directional,
                     cost: b.cost.max(0.0),
                     sprite: b.sprite.as_ref().map(|frames| SpriteArt {
                         frames: frames.clone(),
@@ -351,12 +367,14 @@ pub fn can_place(world: &World, tilemap: InstanceId, def: &BuildingDef, col: i32
 }
 
 /// Place a `def` building at `(col, row)`, or `None` if it can't be placed.
+/// `dir` only matters for directional buildings (conveyors).
 pub fn place(
     world: &mut World,
     tilemap: InstanceId,
     def: &BuildingDef,
     col: i32,
     row: i32,
+    dir: u8,
 ) -> Option<InstanceId> {
     if !can_place(world, tilemap, def, col, row) {
         return None;
@@ -372,18 +390,20 @@ pub fn place(
     );
     let _ = world.set_prop(id, "Color", Value::Color(def.color));
     let _ = world.set_prop(id, "Recipe", Value::String(def.recipe.clone().unwrap_or_default()));
+    if def.directional {
+        let _ = world.set_prop(id, "Direction", Value::Number((dir % 4) as f64));
+    }
     world.set_component::<Inventory>(id, Inventory::new(def.capacity));
     if def.sprite.is_some() {
-        attach_sprite(world, tilemap, id, def, col, row);
+        let sprite = attach_sprite(world, tilemap, id, def, col, row, dir);
+        debug_assert!(sprite.is_some());
     }
     Some(id)
 }
 
-/// Create the building's child `AnimatedSprite`, positioned so its authored
-/// pivot lands on the footprint's ground-diamond centre. Sprites don't inherit
-/// parent transforms, so the position is absolute (buildings never move).
-fn attach_sprite(world: &mut World, tilemap: InstanceId, b: InstanceId, def: &BuildingDef, col: i32, row: i32) {
-    let Some(art) = &def.sprite else { return };
+/// World-space centre of a `w x h` footprint at `(col, row)` on `tilemap`
+/// (absolute — includes the tilemap's own position).
+pub fn footprint_centre(world: &World, tilemap: InstanceId, col: i32, row: i32, w: u32, h: u32) -> Vec2 {
     let map_pos = match world.get_prop(tilemap, "Position") {
         Some(Value::Vec2(p)) => *p,
         _ => Vec2::ZERO,
@@ -393,22 +413,94 @@ fn attach_sprite(world: &mut World, tilemap: InstanceId, b: InstanceId, def: &Bu
         _ => d,
     };
     let (tw, th) = (numf("TileWidth", 64.0), numf("TileHeight", 32.0));
-    // Footprint centre in fractional tile coords -> world (tile_to_world is
-    // linear, so the formula holds for fractional cells).
-    let cf = col as f32 + (def.width as f32 - 1.0) * 0.5;
-    let rf = row as f32 + (def.height as f32 - 1.0) * 0.5;
-    let centre = Vec2::new((cf - rf) * tw * 0.5, (cf + rf) * th * 0.5);
+    // tile_to_world is linear, so the formula holds for fractional cells.
+    let cf = col as f32 + (w as f32 - 1.0) * 0.5;
+    let rf = row as f32 + (h as f32 - 1.0) * 0.5;
+    map_pos + Vec2::new((cf - rf) * tw * 0.5, (cf + rf) * th * 0.5)
+}
 
-    let Ok(sprite) = world.create("AnimatedSprite", b) else { return };
-    let _ = world.set_name(sprite, "Sprite");
+/// Mirror flags that orient east-authored directional art: E, S, W, N.
+fn dir_flips(dir: u8) -> (bool, bool) {
+    match dir % 4 {
+        0 => (false, false),
+        1 => (true, false),
+        2 => (true, true),
+        _ => (false, true),
+    }
+}
+
+fn style_sprite(world: &mut World, sprite: InstanceId, def: &BuildingDef, tilemap: InstanceId, col: i32, row: i32, dir: u8) {
+    let Some(art) = &def.sprite else { return };
     let _ = world.set_prop(sprite, "Frames", Value::Asset(art.frames.clone()));
-    let _ = world.set_prop(sprite, "Animation", Value::String("idle".into()));
     let _ = world.set_prop(sprite, "AutoPlay", Value::Bool(true));
     let _ = world.set_prop(sprite, "Size", Value::Vec2(art.size));
     let _ = world.set_prop(sprite, "Pivot", Value::Vec2(art.pivot));
-    let _ = world.set_prop(sprite, "Position", Value::Vec2(map_pos + centre));
+    let centre = footprint_centre(world, tilemap, col, row, def.width, def.height);
+    let _ = world.set_prop(sprite, "Position", Value::Vec2(centre));
+    if def.directional {
+        let (fx, fy) = dir_flips(dir);
+        let _ = world.set_prop(sprite, "FlipX", Value::Bool(fx));
+        let _ = world.set_prop(sprite, "FlipY", Value::Bool(fy));
+    }
     // Iso depth: farther rows draw first; tilemaps sit at ZIndex 0.
     let _ = world.set_prop(sprite, "ZIndex", Value::Number(10.0 + (col + row) as f64));
+}
+
+/// Create the building's child `AnimatedSprite`, positioned so its authored
+/// pivot lands on the footprint's ground-diamond centre. Sprites don't inherit
+/// parent transforms, so the position is absolute (buildings never move).
+fn attach_sprite(
+    world: &mut World,
+    tilemap: InstanceId,
+    b: InstanceId,
+    def: &BuildingDef,
+    col: i32,
+    row: i32,
+    dir: u8,
+) -> Option<InstanceId> {
+    def.sprite.as_ref()?;
+    let sprite = world.create("AnimatedSprite", b).ok()?;
+    let _ = world.set_name(sprite, "Sprite");
+    let _ = world.set_prop(sprite, "Animation", Value::String("idle".into()));
+    style_sprite(world, sprite, def, tilemap, col, row, dir);
+    Some(sprite)
+}
+
+/// Show, move or clear the placement ghost: a translucent preview sprite that
+/// follows the cursor, tinted by placement validity. `None` clears it.
+pub fn set_ghost(world: &mut World, tilemap: InstanceId, ghost: Option<(&BuildingDef, i32, i32, u8)>) {
+    let existing = world
+        .children(tilemap)
+        .iter()
+        .copied()
+        .find(|&c| world.name(c) == Some("_Ghost"));
+    let Some((def, col, row, dir)) = ghost else {
+        if let Some(g) = existing {
+            let _ = world.destroy(g);
+        }
+        return;
+    };
+    if def.sprite.is_none() {
+        return;
+    }
+    let sprite = match existing {
+        Some(g) => g,
+        None => {
+            let Ok(g) = world.create("AnimatedSprite", tilemap) else { return };
+            let _ = world.set_name(g, "_Ghost");
+            g
+        }
+    };
+    style_sprite(world, sprite, def, tilemap, col, row, dir);
+    let _ = world.set_prop(sprite, "Animation", Value::String("idle".into()));
+    // Always on top of real buildings; tint signals validity.
+    let _ = world.set_prop(sprite, "ZIndex", Value::Number(900.0));
+    let tint = if can_place(world, tilemap, def, col, row) {
+        Color::new(0.7, 1.0, 0.75, 0.55)
+    } else {
+        Color::new(1.0, 0.45, 0.45, 0.55)
+    };
+    let _ = world.set_prop(sprite, "Tint", Value::Color(tint));
 }
 
 /// The building's child `AnimatedSprite`, if it has one.
@@ -465,17 +557,17 @@ mod tests {
         let tm = map(&mut w);
 
         let smelter = cat.get("smelter").unwrap();
-        let b = place(&mut w, tm, smelter, 2, 2).expect("placed");
+        let b = place(&mut w, tm, smelter, 2, 2, 0).expect("placed");
         assert_eq!(w.class_name(b), Some("Building"));
         assert_eq!(building_at(&w, tm, 3, 3), Some(b));
         assert_eq!(building_at(&w, tm, 4, 4), None);
 
         assert!(!can_place(&w, tm, smelter, 3, 3));
-        assert!(place(&mut w, tm, smelter, 3, 3).is_none());
+        assert!(place(&mut w, tm, smelter, 3, 3, 0).is_none());
         assert!(!can_place(&w, tm, smelter, 15, 2));
 
         let belt = cat.get("belt").unwrap();
-        assert!(place(&mut w, tm, belt, 0, 0).is_some());
+        assert!(place(&mut w, tm, belt, 0, 0, 0).is_some());
 
         assert!(remove_at(&mut w, tm, 3, 3));
         assert_eq!(building_at(&w, tm, 2, 2), None);

@@ -207,7 +207,7 @@ mod tests {
         w.set_prop(tm, "MapWidth", Value::Number(16.0)).unwrap();
         w.set_prop(tm, "MapHeight", Value::Number(16.0)).unwrap();
         let cat = Rc::new(BuildingCatalog::parse(CATALOG).unwrap());
-        let reactor = crate::building::place(&mut w, tm, cat.get("reactor").unwrap(), 2, 2).unwrap();
+        let reactor = crate::building::place(&mut w, tm, cat.get("reactor").unwrap(), 2, 2, 0).unwrap();
         (w, tm, reactor, cat)
     }
 
@@ -256,7 +256,7 @@ mod tests {
         let tm = w.create("Tilemap", w.workspace()).unwrap();
         w.set_prop(tm, "MapWidth", Value::Number(8.0)).unwrap();
         w.set_prop(tm, "MapHeight", Value::Number(8.0)).unwrap();
-        let r = crate::building::place(&mut w, tm, cat.get("reactor").unwrap(), 0, 0).unwrap();
+        let r = crate::building::place(&mut w, tm, cat.get("reactor").unwrap(), 0, 0, 0).unwrap();
         w.set_prop(r, "Fuel", Value::Number(100.0)).unwrap();
         w.set_prop(r, "ControlRods", Value::Number(0.0)).unwrap();
         for _ in 0..2000 {
@@ -285,8 +285,8 @@ mod tests {
         w.set_prop(tm, "MapHeight", Value::Number(16.0)).unwrap();
         w.set_prop(tm, "Buildings", Value::Asset("b.buildings.json".into())).unwrap();
         let cat = Rc::new(BuildingCatalog::parse(catalog).unwrap());
-        let r = crate::building::place(&mut w, tm, cat.get("reactor").unwrap(), 2, 2).unwrap();
-        let t = crate::building::place(&mut w, tm, cat.get("cooling").unwrap(), 4, 2).unwrap();
+        let r = crate::building::place(&mut w, tm, cat.get("reactor").unwrap(), 2, 2, 0).unwrap();
+        let t = crate::building::place(&mut w, tm, cat.get("cooling").unwrap(), 4, 2, 0).unwrap();
         w.set_prop(r, "Fuel", Value::Number(100.0)).unwrap();
         w.set_prop(r, "ControlRods", Value::Number(0.0)).unwrap();
 
@@ -314,8 +314,8 @@ mod tests {
         std::fs::write(dir.join("b.buildings.json"), CATALOG).unwrap();
         w.set_prop(tm, "Buildings", Value::Asset("b.buildings.json".into()))
             .unwrap();
-        crate::building::place(&mut w, tm, cat.get("lamp").unwrap(), 8, 8).unwrap();
-        crate::building::place(&mut w, tm, cat.get("lamp").unwrap(), 10, 10).unwrap();
+        crate::building::place(&mut w, tm, cat.get("lamp").unwrap(), 8, 8, 0).unwrap();
+        crate::building::place(&mut w, tm, cat.get("lamp").unwrap(), 10, 10, 0).unwrap();
 
         let mut cache = BuildingCatalogCache::default();
         for _ in 0..50 {
