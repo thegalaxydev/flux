@@ -4,7 +4,6 @@ members = ["crates/*", "plugins/*"]
 
 [workspace.dependencies]
 flux_core = { path = "crates/flux_core" }
-flux_game = { path = "plugins/flux_game" }
 flux_plugin = { path = "crates/flux_plugin" }
 flux_render = { path = "crates/flux_render" }
 flux_script = { path = "crates/flux_script" }
@@ -24,7 +23,9 @@ thiserror = "2"
 opt-level = 1
 
 # Leaner, faster release binaries for distribution.
+# NOTE: no LTO — linker-plugin LTO is incompatible with `-C prefer-dynamic`
+# on Windows, and the plugin architecture (runtime-loaded game DLLs sharing
+# the flux_script dylib) requires prefer-dynamic. See .cargo/config.toml.
 [profile.release]
-lto = "thin"
 codegen-units = 1
 strip = true
