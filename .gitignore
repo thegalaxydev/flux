@@ -3,4 +3,4 @@
 *.log
 .flux/
 projects/
-plugins/
+plugins/cd 

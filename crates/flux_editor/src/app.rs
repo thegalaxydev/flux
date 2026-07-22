@@ -77,6 +77,12 @@ pub struct UiState {
     pub open_script: Option<(String, Option<(usize, usize)>)>,
     /// A `*.frames.json` asset to open in the animation editor.
     pub open_animation: Option<String>,
+    /// A `*.tileset.json` asset to open in the tileset editor.
+    pub open_tileset: Option<String>,
+    /// A `*.worldgen.json` asset to open in the worldgen editor.
+    pub open_worldgen: Option<String>,
+    /// Any other `.json` asset to open in the generic JSON editor.
+    pub open_json: Option<String>,
     /// A Script/Module without a backing file whose source should be generated;
     /// drained into a save-file dialog on the next frame.
     pub create_source: Option<InstanceId>,
@@ -116,6 +122,9 @@ impl Default for UiState {
             explorer: crate::explorer::ExplorerState::default(),
             open_script: None,
             open_animation: None,
+            open_tileset: None,
+            open_worldgen: None,
+            open_json: None,
             create_source: None,
             attr_new_name: String::new(),
             attr_new_ty: 0,
@@ -146,6 +155,9 @@ pub struct EditorApp {
     textures: TextureCache,
     editor: ScriptEditor,
     anim: crate::animation_editor::AnimationEditor,
+    tileset_editor: crate::tileset_editor::TileSetEditor,
+    worldgen_editor: crate::worldgen_editor::WorldGenEditor,
+    json_editor: crate::json_editor::JsonEditor,
     /// Shared clip-library cache for drawing AnimatedSprites in edit mode.
     anim_cache: flux_core::animation::AnimationCache,
     /// Shared tileset cache for drawing Tilemaps in edit mode.
@@ -190,6 +202,9 @@ impl EditorApp {
             textures: TextureCache::default(),
             editor: ScriptEditor::default(),
             anim: crate::animation_editor::AnimationEditor::default(),
+            tileset_editor: Default::default(),
+            worldgen_editor: Default::default(),
+            json_editor: Default::default(),
             anim_cache: Default::default(),
             tile_cache: Default::default(),
             worldgen_cache: Default::default(),
@@ -607,6 +622,9 @@ impl EditorApp {
         self.worldgen_cache.clear();
         self.editor.clear();
         self.anim = crate::animation_editor::AnimationEditor::default();
+        self.tileset_editor = Default::default();
+        self.worldgen_editor = Default::default();
+        self.json_editor = Default::default();
     }
 
     fn save(&mut self, save_as: bool) -> bool {
@@ -709,12 +727,34 @@ impl EditorApp {
         }
         let script_active = matches!(self.editor.active, ActiveTab::Script(_));
 
-        // These work even while the code editor has keyboard focus.
+        // These work even while an editor has keyboard focus. Ctrl+S saves the
+        // content of the active central tab.
         if ctx.input_mut(|i| i.consume_shortcut(&SC_SAVE)) {
-            if script_active {
-                self.save_active_script();
-            } else {
-                self.save(false);
+            match self.editor.active {
+                ActiveTab::Script(_) => self.save_active_script(),
+                ActiveTab::Animation => {
+                    if let Some(r) = self.project_root() {
+                        self.anim.save(&r);
+                    }
+                }
+                ActiveTab::TileSet => {
+                    if let Some(r) = self.project_root() {
+                        self.tileset_editor.save(&r);
+                    }
+                }
+                ActiveTab::WorldGen => {
+                    if let Some(r) = self.project_root() {
+                        self.worldgen_editor.save(&r);
+                    }
+                }
+                ActiveTab::Json => {
+                    if let Some(r) = self.project_root() {
+                        self.json_editor.save(&r);
+                    }
+                }
+                ActiveTab::Scene => {
+                    self.save(false);
+                }
             }
         }
         if script_active {
@@ -1355,6 +1395,12 @@ fn color_row(ui: &mut egui::Ui, label: &str, c: &mut [u8; 3]) -> bool {
     .inner
 }
 
+/// The label for a docked asset-editor tab: the file's name without its folder
+/// path (e.g. `terrain/world.tileset.json` -> `world.tileset.json`).
+fn tab_label(rel: &str) -> String {
+    rel.rsplit(['/', '\\']).next().unwrap_or(rel).to_string()
+}
+
 /// A safe default file name for a generated source file. `*.module.luau` is
 /// recognised as a Module, a plain `*.luau` as a Script (see `flux_render`).
 fn source_file_name(instance_name: &str, is_module: bool) -> String {
@@ -1427,6 +1473,8 @@ impl eframe::App for EditorApp {
 
         let playing = self.playing();
         let root = self.project_root();
+        // A docked asset-editor tab whose close button was clicked this frame.
+        let mut dock_close: Option<ActiveTab> = None;
         {
             let play_rc = self.play.as_ref().map(|s| s.world());
             let Self {
@@ -1438,6 +1486,10 @@ impl eframe::App for EditorApp {
                 tile_cache,
                 editor,
                 settings,
+                anim,
+                tileset_editor,
+                worldgen_editor,
+                json_editor,
                 ..
             } = &mut *self;
             let guard;
@@ -1472,8 +1524,50 @@ impl eframe::App for EditorApp {
                         crate::properties::show(panel, active, ui, root.as_deref(), anim_cache, icons);
                     });
                 });
+            // A closed/absent asset editor can't own the central panel.
+            match editor.active {
+                ActiveTab::Animation if !anim.open => editor.active = ActiveTab::Scene,
+                ActiveTab::TileSet if !tileset_editor.open => editor.active = ActiveTab::Scene,
+                ActiveTab::WorldGen if !worldgen_editor.open => editor.active = ActiveTab::Scene,
+                ActiveTab::Json if !json_editor.open => editor.active = ActiveTab::Scene,
+                _ => {}
+            }
+            // Docked asset-editor tabs, alongside Scene + scripts.
+            let mut extras = Vec::new();
+            if anim.open {
+                extras.push(crate::script_editor::DockTab {
+                    tab: ActiveTab::Animation,
+                    label: tab_label(anim.rel()),
+                    icon: Icon::Animation,
+                    dirty: anim.dirty(),
+                });
+            }
+            if tileset_editor.open {
+                extras.push(crate::script_editor::DockTab {
+                    tab: ActiveTab::TileSet,
+                    label: tab_label(tileset_editor.rel()),
+                    icon: Icon::Tilemap,
+                    dirty: tileset_editor.dirty(),
+                });
+            }
+            if worldgen_editor.open {
+                extras.push(crate::script_editor::DockTab {
+                    tab: ActiveTab::WorldGen,
+                    label: tab_label(worldgen_editor.rel()),
+                    icon: Icon::World,
+                    dirty: worldgen_editor.dirty(),
+                });
+            }
+            if json_editor.open {
+                extras.push(crate::script_editor::DockTab {
+                    tab: ActiveTab::Json,
+                    label: tab_label(json_editor.rel()),
+                    icon: Icon::Metadata,
+                    dirty: json_editor.dirty(),
+                });
+            }
             egui::CentralPanel::default().show(ctx, |panel| {
-                crate::script_editor::tab_strip(panel, editor, icons);
+                dock_close = crate::script_editor::tab_strip(panel, editor, icons, &extras);
                 panel.separator();
                 match editor.active {
                     ActiveTab::Scene => {
@@ -1510,8 +1604,42 @@ impl eframe::App for EditorApp {
                             );
                         }
                     }
+                    ActiveTab::Animation => {
+                        if let Some(r) = root.as_deref() {
+                            anim.dock_ui(panel, textures, r, icons);
+                        }
+                    }
+                    ActiveTab::TileSet => {
+                        if let Some(r) = root.as_deref() {
+                            tileset_editor.dock_ui(panel, textures, r, icons);
+                        }
+                    }
+                    ActiveTab::WorldGen => {
+                        if let Some(r) = root.as_deref() {
+                            worldgen_editor.dock_ui(panel, r, icons);
+                        }
+                    }
+                    ActiveTab::Json => {
+                        if let Some(r) = root.as_deref() {
+                            json_editor.dock_ui(panel, r, icons);
+                        }
+                    }
                 }
             });
+        }
+
+        // Handle a docked asset-editor tab close (its state lives on `self`).
+        if let Some(tab) = dock_close {
+            match tab {
+                ActiveTab::Animation => self.anim.open = false,
+                ActiveTab::TileSet => self.tileset_editor.open = false,
+                ActiveTab::WorldGen => self.worldgen_editor.open = false,
+                ActiveTab::Json => self.json_editor.open = false,
+                _ => {}
+            }
+            if self.editor.active == tab {
+                self.editor.active = ActiveTab::Scene;
+            }
         }
 
         let pending = std::mem::take(&mut self.ui.queue);
@@ -1554,14 +1682,65 @@ impl eframe::App for EditorApp {
         if let Some(rel) = self.ui.open_animation.take() {
             match self.project_root() {
                 Some(root) => match std::fs::read_to_string(root.join(&rel)) {
-                    Ok(json) => self.anim.open_doc(&rel, &json),
+                    Ok(json) => {
+                        self.anim.open_doc(&rel, &json);
+                        self.editor.active = ActiveTab::Animation;
+                    }
                     Err(e) => self.ui.status = format!("Open failed: {e}"),
                 },
                 None => self.ui.status = "Save the project before editing animations".to_string(),
             }
         }
-        if let Some(root) = self.project_root() {
-            self.anim.show(ctx, &mut self.textures, &root, &self.icons);
+
+        // Dedicated JSON-asset editors (tileset / worldgen / generic) dock as
+        // central tabs; opening one loads its file and focuses its tab.
+        if let Some(rel) = self.ui.open_tileset.take() {
+            match self.project_root() {
+                Some(root) => match std::fs::read_to_string(root.join(&rel)) {
+                    Ok(json) => {
+                        self.tileset_editor.open_doc(&rel, &json);
+                        self.editor.active = ActiveTab::TileSet;
+                    }
+                    Err(e) => self.ui.status = format!("Open failed: {e}"),
+                },
+                None => self.ui.status = "Save the project before editing tilesets".to_string(),
+            }
+        }
+        if let Some(rel) = self.ui.open_worldgen.take() {
+            match self.project_root() {
+                Some(root) => match std::fs::read_to_string(root.join(&rel)) {
+                    Ok(json) => {
+                        self.worldgen_editor.open_doc(&rel, &json, &root);
+                        self.editor.active = ActiveTab::WorldGen;
+                    }
+                    Err(e) => self.ui.status = format!("Open failed: {e}"),
+                },
+                None => self.ui.status = "Save the project before editing worldgen".to_string(),
+            }
+        }
+        if let Some(rel) = self.ui.open_json.take() {
+            match self.project_root() {
+                Some(root) => match std::fs::read_to_string(root.join(&rel)) {
+                    Ok(text) => {
+                        self.json_editor.open_text(&rel, &text);
+                        self.editor.active = ActiveTab::Json;
+                    }
+                    Err(e) => self.ui.status = format!("Open failed: {e}"),
+                },
+                None => self.ui.status = "Save the project before editing files".to_string(),
+            }
+        }
+        // Saving an asset editor drops the matching shared cache so live nodes
+        // refresh: tileset/worldgen regenerate Tilemap grids on the next
+        // `tilemap::sync`; an animation library reloads for AnimatedSprites.
+        if self.tileset_editor.take_saved() {
+            self.tile_cache.clear();
+        }
+        if self.worldgen_editor.take_saved() {
+            self.worldgen_cache.clear();
+        }
+        if self.anim.take_saved() {
+            self.anim_cache.clear();
         }
 
         if let Some(id) = self.ui.create_source.take() {

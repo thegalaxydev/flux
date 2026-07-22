@@ -1,0 +1,20 @@
+# See packaging/winget/README.md. Set PACKAGE_VERSION, INSTALLER_URL, and
+# INSTALLER_SHA256 per release (URL + hash come from the published Setup.exe).
+PackageIdentifier: thegalaxydev.Flux
+PackageVersion: PACKAGE_VERSION
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.0.0
+InstallerType: inno
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+Installers:
+  - Architecture: x64
+    InstallerUrl: INSTALLER_URL
+    InstallerSha256: INSTALLER_SHA256
+ManifestType: installer
+ManifestVersion: 1.6.0

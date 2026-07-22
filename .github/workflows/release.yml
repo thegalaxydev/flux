@@ -1,6 +1,7 @@
 name: release
 
-# Build and publish binaries whenever a version tag is pushed, e.g.
+# Build, sign, and publish a self-contained Windows bundle + installer whenever
+# a version tag is pushed, e.g.
 #   git tag v0.1.0 && git push origin v0.1.0
 on:
   push:
@@ -12,26 +13,101 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    # Secrets can't be read in step `if:` directly, so surface "is signing
+    # configured?" as an env flag the signing steps can gate on.
+    env:
+      HAS_SIGNING: ${{ secrets.AZURE_CLIENT_ID != '' }}
     steps:
       - uses: actions/checkout@v4
+
+      # Pin the toolchain: `prefer-dynamic` links the exes against this exact
+      # `std-*.dll`, which the bundler ships alongside them. Bump deliberately.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        run: cargo build --release -p flux_editor -p flux_player
+      - name: Install cargo-about (third-party license notices)
+        run: cargo install cargo-about --locked
 
-      - name: Package
+      # Stage the self-contained folder (exes + flux_script.dll + std-*.dll +
+      # plugins/flux_game.dll + LICENSE + THIRD-PARTY-LICENSES.txt). No zip yet —
+      # exes are signed in place first so the archive contains signed binaries.
+      - name: Build distribution bundle
+        run: cargo xtask dist --version ${{ github.ref_name }} --no-zip
+
+      - name: Resolve paths
+        id: paths
         shell: pwsh
         run: |
-          $pkg = "flux-${{ github.ref_name }}-windows-x64"
-          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
-          Copy-Item target/release/flux_editor.exe $pkg
-          Copy-Item target/release/flux_player.exe $pkg
-          Copy-Item LICENSE $pkg
-          Compress-Archive -Path "$pkg/*" -DestinationPath "$pkg.zip"
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          $stage = "dist/Flux-$ver-windows-x64"
+          "version=$ver"    >> $env:GITHUB_OUTPUT
+          "stage=$stage"    >> $env:GITHUB_OUTPUT
+
+      # --- Code signing (Azure Trusted Signing) ---------------------------------
+      # Skipped automatically until the AZURE_* / TRUSTED_SIGNING_* repo secrets
+      # are configured, so the workflow works before signing is set up. Signs the
+      # exes (and the game plugin) in the staged folder, then the installer below.
+      - name: Sign binaries
+        id: sign
+        if: env.HAS_SIGNING == 'true'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ steps.paths.outputs.stage }}
+          files-folder-filter: exe,dll
+          files-folder-recurse: true
+
+      # --- Installer (Inno Setup) ----------------------------------------------
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $stage = (Resolve-Path "${{ steps.paths.outputs.stage }}").Path
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DFluxVersion=${{ steps.paths.outputs.version }}" `
+            "/DStageDir=$stage" `
+            installer/flux.iss
+
+      - name: Sign installer
+        if: env.HAS_SIGNING == 'true'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          files-folder: dist
+          files-folder-filter: exe
+
+      # --- Archive + checksums (over the now-signed artifacts) ------------------
+      - name: Zip + checksums
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.paths.outputs.version }}"
+          $stage = "${{ steps.paths.outputs.stage }}"
+          $zip = "dist/Flux-$ver-windows-x64.zip"
+          Compress-Archive -Path "$stage" -DestinationPath $zip -Force
+          $artifacts = Get-ChildItem dist -File | Where-Object { $_.Extension -in '.zip','.exe' }
+          $artifacts | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)"
+          } | Set-Content -Encoding ascii dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: flux-*-windows-x64.zip
+          files: |
+            dist/Flux-*-windows-x64.zip
+            dist/Flux-*-setup.exe
+            dist/SHA256SUMS.txt
           generate_release_notes: true
