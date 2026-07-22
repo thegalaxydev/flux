@@ -1,0 +1,11 @@
+{
+  "tile_width": 64,
+  "tile_height": 32,
+  "tiles": [
+    { "id": "dirt",  "color": [0.5, 0.4, 0.3, 1.0] },
+    { "id": "grass", "color": [0.3, 0.6, 0.3, 1.0] },
+    { "id": "stone", "color": [0.5, 0.5, 0.5, 1.0] },
+    { "id": "water", "color": [0.2, 0.4, 0.7, 1.0] },
+    { "id": "coal",  "color": [0.1, 0.1, 0.1, 1.0] }
+  ]
+}

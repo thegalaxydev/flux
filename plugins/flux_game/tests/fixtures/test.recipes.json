@@ -1,0 +1,5 @@
+{
+  "recipes": [
+    { "id": "plate", "time": 0.5, "inputs": [{ "item": "coal", "count": 1 }], "outputs": [{ "item": "plate", "count": 1 }] }
+  ]
+}

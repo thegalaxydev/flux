@@ -1,0 +1,1 @@
+-- Intentionally empty: Rust-side tests drive the world directly.
