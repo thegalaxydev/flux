@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Developer automation (not shipped). Run via the `cargo xtask` alias — see
+# `.cargo/config.toml`. `cargo xtask dist` assembles a self-contained release
+# bundle for public distribution.
+[dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.10"

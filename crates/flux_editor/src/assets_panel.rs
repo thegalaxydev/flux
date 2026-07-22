@@ -82,6 +82,35 @@ pub fn show(
                     state.open_animation = Some(rel);
                 }
             }
+            if icons
+                .icon(Icon::Material)
+                .size(16.0)
+                .button(ui)
+                .on_hover_text("New tileset (.tileset.json)")
+                .clicked()
+            {
+                match create_asset(root, &state.asset_dir, "untitled", ".tileset.json",
+                    &crate::tileset_editor::default_doc().to_json())
+                {
+                    Ok(rel) => state.open_tileset = Some(rel),
+                    Err(e) => state.status = format!("New tileset failed: {e}"),
+                }
+            }
+            if icons
+                .icon(Icon::Material)
+                .size(16.0)
+                .role(IconRole::Accent)
+                .button(ui)
+                .on_hover_text("New worldgen (.worldgen.json)")
+                .clicked()
+            {
+                match create_asset(root, &state.asset_dir, "untitled", ".worldgen.json",
+                    &crate::worldgen_editor::default_doc().to_json())
+                {
+                    Ok(rel) => state.open_worldgen = Some(rel),
+                    Err(e) => state.status = format!("New worldgen failed: {e}"),
+                }
+            }
         });
     });
     ui.separator();
@@ -319,18 +348,39 @@ fn row(
     if is_script && resp.double_clicked() {
         state.open_script = Some((rel.to_string(), None));
     }
-    if kind == AssetKind::Animation && resp.double_clicked() {
-        state.open_animation = Some(rel.to_string());
+    if resp.double_clicked() {
+        match kind {
+            AssetKind::Animation => state.open_animation = Some(rel.to_string()),
+            AssetKind::TileSet => state.open_tileset = Some(rel.to_string()),
+            AssetKind::WorldGen => state.open_worldgen = Some(rel.to_string()),
+            // Plugin catalogs and any other plain `.json` open in the generic
+            // JSON editor (scenes are handled by File ▸ Open, not here).
+            AssetKind::Custom(_) => state.open_json = Some(rel.to_string()),
+            AssetKind::Unknown if is_json(name) => state.open_json = Some(rel.to_string()),
+            _ => {}
+        }
     }
 
+    let opens_editor = matches!(
+        kind,
+        AssetKind::Animation | AssetKind::TileSet | AssetKind::WorldGen | AssetKind::Custom(_)
+    ) || (kind == AssetKind::Unknown && is_json(name));
     let hover = match kind {
         AssetKind::Image => "Drag onto a sprite/Explorer · right-click for options",
-        AssetKind::Animation => "Double-click to open · right-click for options",
-        _ if is_script => "Double-click to open · right-click for options",
+        _ if opens_editor || is_script => "Double-click to open · right-click for options",
         _ => "Right-click for options",
     };
     resp.on_hover_text(hover).context_menu(|ui| {
         entry_menu(ui, state, root, rel, name, false);
+        // Raw JSON access for any `.json` (incl. tileset/worldgen/catalogs),
+        // except scenes which open via File ▸ Open.
+        if is_json(name) && kind != AssetKind::Scene {
+            ui.separator();
+            if ui.button("Open in JSON editor").clicked() {
+                state.open_json = Some(rel.to_string());
+                ui.close();
+            }
+        }
         // Image-specific actions.
         if kind == AssetKind::Image {
             ui.separator();
@@ -393,6 +443,38 @@ fn entry_menu(ui: &mut Ui, state: &mut UiState, root: &Path, rel: &str, name: &s
 
 /// Starter content for a freshly created animation library.
 const STARTER_FRAMES: &str = "{\n  \"texture\": \"\",\n  \"clips\": {\n    \"New\": { \"loop\": true, \"frames\": [] }\n  }\n}\n";
+
+/// Whether `name` is a plain `.json` file (any casing).
+fn is_json(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".json")
+}
+
+/// Create a uniquely-named `<base><suffix>` file in `dir` (relative to `root`)
+/// with `content`, returning its project-relative path. Shared by the "New
+/// tileset"/"New worldgen" actions (suffix carries the compound extension).
+fn create_asset(
+    root: &Path,
+    dir: &Path,
+    base: &str,
+    suffix: &str,
+    content: &str,
+) -> std::io::Result<String> {
+    let mut n = 0;
+    let (name, full) = loop {
+        let name = if n == 0 {
+            format!("{base}{suffix}")
+        } else {
+            format!("{base}_{n}{suffix}")
+        };
+        let full = root.join(dir).join(&name);
+        if !full.exists() {
+            break (name, full);
+        }
+        n += 1;
+    };
+    std::fs::write(&full, content)?;
+    Ok(join_rel(dir, &name))
+}
 
 /// Create a uniquely-named `*.frames.json` in `dir` (relative to `root`) and
 /// return its project-relative path.

@@ -9,9 +9,10 @@ use std::path::Path;
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use eframe::egui::epaint::Mesh;
 use flux_core::animation::{ClipDoc, FrameDoc, FramesDoc};
-use flux_icons::Icons;
+use flux_icons::{Icon, Icons};
 
 use crate::textures::TextureCache;
+use crate::tileset_editor::save_indicator;
 
 /// Grid-slicer dialog state.
 struct Slicer {
@@ -43,6 +44,9 @@ pub struct AnimationEditor {
     slicer: Option<Slicer>,
     new_clip_name: String,
     status: String,
+    /// Set for one frame after a successful save, so the app can drop the shared
+    /// animation cache and refresh any live `AnimatedSprite` using this library.
+    just_saved: bool,
 }
 
 impl AnimationEditor {
@@ -69,45 +73,36 @@ impl AnimationEditor {
         self.doc.to_json() != self.saved
     }
 
-    fn save(&mut self, root: &Path) {
+    /// Project-relative path of the open library (for the tab label).
+    pub fn rel(&self) -> &str {
+        &self.rel
+    }
+
+    /// Whether a save happened since the last call (consumes the flag).
+    pub fn take_saved(&mut self) -> bool {
+        std::mem::take(&mut self.just_saved)
+    }
+
+    pub(crate) fn save(&mut self, root: &Path) {
         let json = self.doc.to_json();
         match std::fs::write(root.join(&self.rel), &json) {
             Ok(()) => {
                 self.saved = json;
                 self.status = "Saved".to_string();
+                self.just_saved = true;
             }
             Err(e) => self.status = format!("Save failed: {e}"),
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, textures: &mut TextureCache, root: &Path, _icons: &Icons) {
-        if !self.open {
-            return;
-        }
-        let dirty = self.dirty();
-        let title = format!("Animation Editor — {}{}", self.rel, if dirty { " *" } else { "" });
-        let mut open = self.open;
-        egui::Window::new(title)
-            .id(egui::Id::new("animation_editor"))
-            .open(&mut open)
-            .resizable(true)
-            .default_size(vec2(760.0, 460.0))
-            .min_size(vec2(520.0, 340.0))
-            .show(ctx, |ui| self.body(ui, textures, root));
-        self.open = open;
-    }
-
-    fn body(&mut self, ui: &mut Ui, textures: &mut TextureCache, root: &Path) {
+    /// Render into the central panel as a docked tab.
+    pub fn dock_ui(&mut self, ui: &mut Ui, textures: &mut TextureCache, root: &Path, icons: &Icons) {
         // ---- header ----
         ui.horizontal(|ui| {
-            if ui.button("💾 Save").clicked() {
+            if icons.icon(Icon::Save).size(16.0).button(ui).on_hover_text("Save (Ctrl+S)").clicked() {
                 self.save(root);
             }
-            ui.label(
-                egui::RichText::new(if self.dirty() { "● unsaved" } else { "saved" })
-                    .weak()
-                    .small(),
-            );
+            save_indicator(ui, icons, self.dirty());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.weak(&self.status);
             });
@@ -530,7 +525,7 @@ fn frame_at(clip: &ClipDoc, t: f32) -> usize {
 }
 
 /// Fit a frame's pixel rect inside `bounds` preserving aspect ratio, centred.
-fn fit_rect(bounds: Rect, src: [f32; 4]) -> Rect {
+pub(crate) fn fit_rect(bounds: Rect, src: [f32; 4]) -> Rect {
     let (sw, sh) = (src[2].max(1.0), src[3].max(1.0));
     let scale = (bounds.width() / sw).min(bounds.height() / sh);
     let size = vec2(sw * scale, sh * scale);
@@ -538,7 +533,7 @@ fn fit_rect(bounds: Rect, src: [f32; 4]) -> Rect {
 }
 
 /// Paint a texture sub-region (`src` in pixels) into `dest`.
-fn paint_frame(ui: &Ui, tex: &egui::TextureHandle, dest: Rect, src: [f32; 4]) {
+pub(crate) fn paint_frame(ui: &Ui, tex: &egui::TextureHandle, dest: Rect, src: [f32; 4]) {
     let sz = tex.size();
     let (tw, th) = (sz[0] as f32, sz[1] as f32);
     let uv = if src[2] <= 0.0 || src[3] <= 0.0 || tw <= 0.0 || th <= 0.0 {

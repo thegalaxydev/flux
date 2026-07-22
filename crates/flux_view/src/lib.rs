@@ -176,7 +176,7 @@ pub fn draw_scene(
         // A Tilemap draws its whole grid; the rest are single textured quads.
         if world.class_name(id) == Some("Tilemap") {
             if let Some(aabb) = draw_tilemap(
-                painter, ctx, textures, tiles, root, world, id, rect, &to_screen, &to_world,
+                painter, ctx, textures, anim, tiles, root, world, id, rect, &to_screen, &to_world,
             ) {
                 let visible = matches!(world.get_prop(id, "Visible"), Some(Value::Bool(true)));
                 let locked = matches!(world.get_prop(id, "Locked"), Some(Value::Bool(true)));
@@ -336,6 +336,7 @@ fn draw_tilemap(
     painter: &Painter,
     ctx: &egui::Context,
     textures: &mut TextureCache,
+    anim: &mut flux_core::animation::AnimationCache,
     tiles: &mut TileSetCache,
     root: Option<&Path>,
     world: &World,
@@ -372,9 +373,11 @@ fn draw_tilemap(
         (Some(t), Some(r)) if !t.is_empty() => textures.get(ctx, r, t),
         _ => None,
     });
-    let tex_size = handle
-        .as_ref()
-        .map(|h| (h.size()[0] as f32, h.size()[1] as f32));
+
+    // Animated tiles share one wall-clock; `animated_seen` drives a repaint so
+    // they keep ticking even when the editor is otherwise idle.
+    let time = ctx.input(|i| i.time);
+    let mut animated_seen = false;
 
     // Range-cull to the tiles the viewport can actually see: inverse-map the
     // four screen corners to tile space and iterate only that window (+pad for
@@ -394,59 +397,139 @@ fn draw_tilemap(
             if !rect.intersects(aabb) {
                 continue;
             }
-            let (color, src) = tile_visual(tileset.as_deref(), cell.tile);
-            let tint = to_color(&color);
-
-            // Draws the atlas region `src` into the tile's axis-aligned box
-            // scaled by `inset` (1 = whole tile). Textures are authored art, so
-            // they draw untinted — a tile's `color` is only the flat fallback.
+            // Static atlas blit for `src` into the tile box, scaled by `inset`
+            // (1 = whole tile). Authored art draws untinted; a tile's `color` is
+            // only the flat fallback.
             let textured = |painter: &Painter, src: SrcRect, inset: f32| -> bool {
-                let (Some(h), Some((tpw, tph))) = (handle.as_ref(), tex_size) else {
-                    return false;
-                };
-                if src.is_whole() || tpw <= 0.0 || tph <= 0.0 {
-                    return false;
+                match handle.as_ref() {
+                    Some(h) => blit_tile(painter, h, src, col, row, tw, th, pos, to_screen, inset),
+                    None => false,
                 }
-                let c = flux_core::tilemap::tile_to_world(col, row, tw, th);
-                let tl = to_screen(pos.x + c.x - tw * 0.5 * inset, pos.y + c.y - th * 0.5 * inset);
-                let br = to_screen(pos.x + c.x + tw * 0.5 * inset, pos.y + c.y + th * 0.5 * inset);
-                // Half-texel inset (see the sprite path): keeps linear
-                // filtering from bleeding the neighbouring atlas tile in.
-                let uv = Rect::from_min_max(
-                    Pos2::new((src.x + 0.5) / tpw, (src.y + 0.5) / tph),
-                    Pos2::new((src.x + src.w - 0.5) / tpw, (src.y + src.h - 0.5) / tph),
-                );
-                let mut mesh = Mesh::with_texture(h.id());
-                mesh.add_rect_with_uv(Rect::from_two_pos(tl, br), uv, Color32::WHITE);
-                painter.add(Shape::mesh(mesh));
-                true
             };
 
-            if !textured(painter, src, 1.0) {
-                // Flat colour diamond.
-                painter.add(Shape::convex_polygon(corners.to_vec(), tint, Stroke::NONE));
+            // An animated tile plays its clip's current frame (shared clock) in
+            // place of the static rect/colour; base + ore both support it.
+            let mut anim_blit = |index: u16, inset: f32| -> bool {
+                let Some(ta) =
+                    tileset.as_deref().and_then(|ts| tile_def(ts, index)).and_then(|d| d.anim.clone())
+                else {
+                    return false;
+                };
+                let Some(r) = root else { return false };
+                match animated_tile(anim, textures, ctx, r, &ta, time) {
+                    Some((h, fr)) => {
+                        animated_seen = true;
+                        blit_tile(painter, &h, fr, col, row, tw, th, pos, to_screen, inset)
+                    }
+                    None => false,
+                }
+            };
+
+            // Base terrain: animated clip, else static texture, else flat diamond.
+            if !anim_blit(cell.tile, 1.0) && !textured(painter, tile_visual(tileset.as_deref(), cell.tile).1, 1.0) {
+                let color = tile_visual(tileset.as_deref(), cell.tile).0;
+                painter.add(Shape::convex_polygon(corners.to_vec(), to_color(&color), Stroke::NONE));
             }
 
-            // Ore deposit overlay: atlas art when available, else an inset
+            // Ore deposit overlay: animated clip, else atlas art, else an inset
             // diamond in the ore's colour.
-            if cell.has_ore() {
-                let (ore_color, ore_src) = tile_visual(tileset.as_deref(), cell.ore);
-                if !textured(painter, ore_src, 0.9) {
-                    let centre = to_screen(
-                        pos.x + flux_core::tilemap::tile_to_world(col, row, tw, th).x,
-                        pos.y + flux_core::tilemap::tile_to_world(col, row, tw, th).y,
-                    );
-                    let pip: Vec<Pos2> = corners
-                        .iter()
-                        .map(|c| centre + (*c - centre) * 0.5)
-                        .collect();
-                    painter.add(Shape::convex_polygon(pip, to_color(&ore_color), Stroke::NONE));
-                }
+            if cell.has_ore()
+                && !anim_blit(cell.ore, 0.9)
+                && !textured(painter, tile_visual(tileset.as_deref(), cell.ore).1, 0.9)
+            {
+                let ore_color = tile_visual(tileset.as_deref(), cell.ore).0;
+                let centre = to_screen(
+                    pos.x + flux_core::tilemap::tile_to_world(col, row, tw, th).x,
+                    pos.y + flux_core::tilemap::tile_to_world(col, row, tw, th).y,
+                );
+                let pip: Vec<Pos2> = corners.iter().map(|c| centre + (*c - centre) * 0.5).collect();
+                painter.add(Shape::convex_polygon(pip, to_color(&ore_color), Stroke::NONE));
             }
         }
     }
 
+    // Keep animated tiles ticking while their tilemap is on screen.
+    if animated_seen {
+        ctx.request_repaint();
+    }
+
     Some(map_aabb)
+}
+
+/// Blit texture sub-region `src` (pixels) into tile `(col,row)`'s axis-aligned
+/// box, scaled by `inset` (1 = whole tile). A half-texel inset on the UVs keeps
+/// linear filtering from bleeding neighbouring atlas regions in. Returns `false`
+/// (drawing nothing) for a whole-texture/degenerate `src`.
+#[allow(clippy::too_many_arguments)]
+fn blit_tile(
+    painter: &Painter,
+    handle: &egui::TextureHandle,
+    src: SrcRect,
+    col: i32,
+    row: i32,
+    tw: f32,
+    th: f32,
+    pos: glam::Vec2,
+    to_screen: &impl Fn(f32, f32) -> Pos2,
+    inset: f32,
+) -> bool {
+    let sz = handle.size();
+    let (tpw, tph) = (sz[0] as f32, sz[1] as f32);
+    if src.is_whole() || tpw <= 0.0 || tph <= 0.0 {
+        return false;
+    }
+    let c = flux_core::tilemap::tile_to_world(col, row, tw, th);
+    let tl = to_screen(pos.x + c.x - tw * 0.5 * inset, pos.y + c.y - th * 0.5 * inset);
+    let br = to_screen(pos.x + c.x + tw * 0.5 * inset, pos.y + c.y + th * 0.5 * inset);
+    let uv = Rect::from_min_max(
+        Pos2::new((src.x + 0.5) / tpw, (src.y + 0.5) / tph),
+        Pos2::new((src.x + src.w - 0.5) / tpw, (src.y + src.h - 0.5) / tph),
+    );
+    let mut mesh = Mesh::with_texture(handle.id());
+    mesh.add_rect_with_uv(Rect::from_two_pos(tl, br), uv, Color32::WHITE);
+    painter.add(Shape::mesh(mesh));
+    true
+}
+
+/// A tile index's [`TileDef`], clamped into range (mirrors [`tile_visual`]).
+fn tile_def(ts: &flux_core::tilemap::TileSet, index: u16) -> Option<&flux_core::tilemap::TileDef> {
+    if ts.is_empty() {
+        return None;
+    }
+    ts.tile((index as usize).min(ts.len() - 1) as u16)
+}
+
+/// Resolve an animated tile's clip to its current `(texture handle, frame rect)`
+/// on the shared wall-clock `time`, or `None` if the library/clip/texture can't
+/// be loaded. Reuses the exact frame-timing of [`flux_core::animation`].
+fn animated_tile(
+    anim: &mut flux_core::animation::AnimationCache,
+    textures: &mut TextureCache,
+    ctx: &egui::Context,
+    root: &Path,
+    ta: &flux_core::tilemap::TileAnim,
+    time: f64,
+) -> Option<(egui::TextureHandle, SrcRect)> {
+    let lib = anim.get(&ta.frames, root)?;
+    let clip = lib.clip(&ta.clip)?;
+    if clip.frames.is_empty() {
+        return None;
+    }
+    let total = clip.total();
+    let speed = if clip.speed > 0.0 { clip.speed } else { 1.0 };
+    let t = if clip.looped && total > 0.0 {
+        (time as f32 * speed).rem_euclid(total)
+    } else {
+        (time as f32 * speed).min(total)
+    };
+    let frame = &clip.frames[clip.frame_at(t)];
+    let tex = frame
+        .texture
+        .clone()
+        .or_else(|| clip.texture.clone())
+        .or_else(|| lib.default_texture().map(str::to_string))?;
+    let handle = textures.get(ctx, root, &tex)?;
+    Some((handle, frame.rect))
 }
 
 /// Resolve a tile index to its `(colour, atlas rect)`, falling back to a default

@@ -5,3 +5,8 @@
 # the toolchain's std-*.dll next to the exe for standalone distribution.
 [build]
 rustflags = ["-C", "prefer-dynamic"]
+
+# Developer automation. `cargo xtask dist` assembles a self-contained release
+# bundle for distribution (see xtask/src/main.rs).
+[alias]
+xtask = "run --quiet --release --package xtask --"

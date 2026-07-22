@@ -112,6 +112,21 @@ impl Default for Assist {
 pub enum ActiveTab {
     Scene,
     Script(usize),
+    /// A docked asset editor (its state lives on `EditorApp`, not here).
+    Animation,
+    TileSet,
+    WorldGen,
+    Json,
+}
+
+/// A non-script editor docked into the central tab strip (tileset / worldgen /
+/// generic JSON). The editor's own state lives on `EditorApp`; this is just what
+/// [`tab_strip`] needs to draw and select it.
+pub struct DockTab {
+    pub tab: ActiveTab,
+    pub label: String,
+    pub icon: Icon,
+    pub dirty: bool,
 }
 
 #[derive(Default)]
@@ -225,7 +240,7 @@ impl ScriptEditor {
     pub fn active_index(&self) -> Option<usize> {
         match self.active {
             ActiveTab::Script(i) => Some(i),
-            ActiveTab::Scene => None,
+            _ => None,
         }
     }
 
@@ -239,9 +254,17 @@ impl ScriptEditor {
     }
 }
 
-/// Draws the tab strip (Scene + open scripts). Mutates `active`; queues a close
-/// (immediate for clean tabs, deferred via `pending_close` for dirty ones).
-pub fn tab_strip(ui: &mut Ui, editor: &mut ScriptEditor, icons: &Icons) {
+/// Draws the tab strip (Scene + open scripts + docked asset editors). Mutates
+/// `active`; queues a script close (immediate for clean tabs, deferred via
+/// `pending_close` for dirty ones). Returns a docked asset editor whose close
+/// button was clicked, for the caller to act on (its state isn't held here).
+pub fn tab_strip(
+    ui: &mut Ui,
+    editor: &mut ScriptEditor,
+    icons: &Icons,
+    extras: &[DockTab],
+) -> Option<ActiveTab> {
+    let mut extra_close = None;
     ui.horizontal(|ui| {
         let scene_selected = editor.active == ActiveTab::Scene;
         if ui.selectable_label(scene_selected, "🎬 Scene").clicked() {
@@ -305,7 +328,52 @@ pub fn tab_strip(ui: &mut Ui, editor: &mut ScriptEditor, icons: &Icons) {
                 editor.close(i);
             }
         }
+
+        // Docked asset editors (tileset / worldgen / json), drawn like script
+        // tabs but keyed by their `ActiveTab` variant rather than an index.
+        for ex in extras {
+            let selected = editor.active == ex.tab;
+            let bg = ui.painter().add(egui::Shape::Noop);
+            let mut label_clicked = false;
+            let inner = ui.horizontal(|ui| {
+                ui.add_space(4.0);
+                icons.icon(ex.icon).size(13.0).show(ui);
+                label_clicked = ui
+                    .add(egui::Label::new(&ex.label).selectable(false).sense(Sense::click()))
+                    .clicked();
+                if ex.dirty {
+                    icons
+                        .icon(Icon::Modified)
+                        .size(10.0)
+                        .show(ui)
+                        .on_hover_text("Unsaved changes");
+                }
+                if icons
+                    .icon(Icon::Close)
+                    .size(11.0)
+                    .button(ui)
+                    .on_hover_text("Close")
+                    .clicked()
+                {
+                    extra_close = Some(ex.tab);
+                }
+            });
+            let rect = inner.response.rect.expand2(vec2(2.0, 3.0));
+            let hovered = ui.rect_contains_pointer(rect);
+            let fill = if selected {
+                ui.visuals().selection.bg_fill
+            } else if hovered {
+                ui.visuals().widgets.hovered.bg_fill
+            } else {
+                Color32::TRANSPARENT
+            };
+            ui.painter().set(bg, egui::Shape::rect_filled(rect, 4.0, fill));
+            if label_clicked {
+                editor.active = ex.tab;
+            }
+        }
     });
+    extra_close
 }
 
 #[allow(clippy::too_many_arguments)]

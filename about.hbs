@@ -1,0 +1,17 @@
+Flux — Third-Party License Notices
+==================================
+
+This distribution of Flux includes the following open-source components. Each is
+provided under its own license, reproduced below.
+
+{{#each licenses}}
+--------------------------------------------------------------------------------
+{{name}}{{#if version}} ({{version}}){{/if}}
+
+Used by:
+{{#each used_by}}  - {{crate.name}} {{crate.version}}
+{{/each}}
+--------------------------------------------------------------------------------
+{{text}}
+
+{{/each}}

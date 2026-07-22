@@ -1,0 +1,19 @@
+# See packaging/winget/README.md. Set PACKAGE_VERSION per release.
+PackageIdentifier: thegalaxydev.Flux
+PackageVersion: PACKAGE_VERSION
+PackageLocale: en-US
+Publisher: thegalaxydev
+PublisherUrl: https://github.com/thegalaxydev
+PackageName: Flux
+PackageUrl: https://github.com/thegalaxydev/flux
+License: MIT
+LicenseUrl: https://github.com/thegalaxydev/flux/blob/main/LICENSE
+ShortDescription: A 2D game engine and editor with Luau scripting.
+Tags:
+  - game-engine
+  - gamedev
+  - editor
+  - luau
+  - 2d
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

@@ -6,13 +6,17 @@ mod asset_field;
 mod assets_panel;
 mod command;
 mod explorer;
+mod json_editor;
 mod language;
 mod launcher;
 mod properties;
 mod script_editor;
 mod settings;
 mod textures;
+mod tileset_editor;
+mod updater;
 mod viewport;
+mod worldgen_editor;
 
 use std::path::{Path, PathBuf};
 
@@ -26,6 +30,10 @@ use app::EditorApp;
 use launcher::{LaunchAction, Launcher, Recents};
 
 fn main() -> eframe::Result {
+    // Must run first: when this exe was launched as the Velopack installer,
+    // updater, or uninstaller, this handles it and may exit/restart the process.
+    updater::run_hooks();
+
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--write-demo") {
         let path = args
@@ -79,6 +87,12 @@ struct FluxApp {
     tracked: Option<PathBuf>,
     /// A scene to open on the first frame (CLI arg / plugin relaunch).
     pending_open: Option<PathBuf>,
+    /// Background auto-update check (Velopack); inert unless a release feed is
+    /// configured. Its startup check is kicked off on the first frame.
+    updater: updater::Updater,
+    update_check_started: bool,
+    /// Set when the user dismisses the "update ready" banner for this session.
+    update_dismissed: bool,
 }
 
 impl FluxApp {
@@ -90,7 +104,31 @@ impl FluxApp {
             icons: Icons::lucide(),
             tracked: None,
             pending_open: startup_scene,
+            updater: updater::Updater::default(),
+            update_check_started: false,
+            update_dismissed: false,
         }
+    }
+
+    /// Top banner offering to apply a downloaded update, shown app-wide once a
+    /// background check reports one is ready.
+    fn update_banner(&mut self, ctx: &egui::Context) {
+        use updater::UpdateState;
+        if self.update_dismissed || self.updater.state() != UpdateState::Downloaded {
+            return;
+        }
+        egui::TopBottomPanel::top("update_banner").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                self.icons.icon(flux_icons::Icon::Download).size(16.0).show(ui);
+                ui.label("A new version of Flux is ready.");
+                if ui.button("Restart & Update").clicked() {
+                    self.updater.apply_and_restart();
+                }
+                if ui.button("Later").clicked() {
+                    self.update_dismissed = true;
+                }
+            });
+        });
     }
 
     fn enter(&mut self, world: World, path: Option<PathBuf>) {
@@ -127,6 +165,14 @@ impl FluxApp {
 impl eframe::App for FluxApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.icons.sync_theme_from(&ctx.style().visuals);
+
+        // Kick off the one-shot update check on the first frame (inert unless a
+        // release feed is configured), then surface a banner when one is ready.
+        if !self.update_check_started {
+            self.update_check_started = true;
+            self.updater.spawn_check();
+        }
+        self.update_banner(ctx);
 
         if let Some(path) = self.pending_open.take() {
             self.open_path(ctx, path);

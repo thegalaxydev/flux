@@ -127,6 +127,14 @@ pub struct TileDoc {
     /// `[x, y, w, h]` in atlas pixels; omitted = flat colour (or whole texture).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rect: Option<[f32; 4]>,
+    /// Animated tile: path to a sprite-frames library (`*.spriteframes` /
+    /// `*.frames.json`). With `clip`, the tile renders that clip's current frame
+    /// (on a shared wall-clock) instead of its static `rect`/`color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frames: Option<String>,
+    /// Clip name within `frames` to play. Ignored unless `frames` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<String>,
 }
 
 fn default_tw() -> f32 {
@@ -161,6 +169,19 @@ pub struct TileDef {
     pub color: Color,
     /// Atlas sub-region; whole-texture ([`Rect::is_whole`]) when unspecified.
     pub rect: Rect,
+    /// When set, the tile is animated: the renderer plays this clip instead of
+    /// drawing the static `rect`/`color`. Resolved against an
+    /// [`crate::animation::AnimationCache`] at draw time (the tileset asset
+    /// itself doesn't own the clip data).
+    pub anim: Option<TileAnim>,
+}
+
+/// A tile's reference to an animation clip: a sprite-frames library path plus a
+/// clip name inside it. Built from [`TileDoc::frames`] + [`TileDoc::clip`].
+#[derive(Clone)]
+pub struct TileAnim {
+    pub frames: String,
+    pub clip: String,
 }
 
 pub struct TileSet {
@@ -184,6 +205,14 @@ impl TileSet {
             .enumerate()
             .map(|(i, t)| {
                 by_id.insert(t.id.clone(), i as u16);
+                // Animate only when both a library and a (non-empty) clip name
+                // are given; otherwise the tile stays static.
+                let anim = match (&t.frames, &t.clip) {
+                    (Some(f), Some(c)) if !f.trim().is_empty() && !c.trim().is_empty() => {
+                        Some(TileAnim { frames: f.clone(), clip: c.clone() })
+                    }
+                    _ => None,
+                };
                 TileDef {
                     id: t.id.clone(),
                     color: Color::new(t.color[0], t.color[1], t.color[2], t.color[3]),
@@ -191,6 +220,7 @@ impl TileSet {
                         .rect
                         .map(|r| Rect::new(r[0], r[1], r[2], r[3]))
                         .unwrap_or_default(),
+                    anim,
                 }
             })
             .collect();
@@ -302,6 +332,10 @@ pub struct OreDoc {
     /// Feature size (in tiles) of the deposit noise — bigger = larger patches.
     #[serde(default = "default_ore_scale")]
     pub scale: f32,
+    /// Terrain tile ids this ore may spawn on (e.g. `["rock","mountain"]`).
+    /// Empty = any terrain in the elevation window.
+    #[serde(default)]
+    pub on: Vec<String>,
 }
 
 fn default_elev_scale() -> f32 {
@@ -576,6 +610,7 @@ struct ResolvedOre {
     max_e: f32,
     scale: f32,
     seed: u64,
+    on: Vec<u16>,
 }
 
 /// Generate a deterministic `width` x `height` grid from `seed`.
@@ -611,6 +646,10 @@ pub fn generate(
             .iter()
             .enumerate()
             .filter_map(|(i, o)| {
+                let on: Vec<u16> = o.on.iter().filter_map(|id| ts.index_of(id)).collect();
+                if !o.on.is_empty() && on.is_empty() {
+                    return None;
+                }
                 Some(ResolvedOre {
                     tile: ts.index_of(&o.tile)?,
                     freq: o.frequency.clamp(0.0, 1.0),
@@ -619,6 +658,7 @@ pub fn generate(
                     max_e: o.max_elevation,
                     scale: o.scale.max(1.0),
                     seed: seed ^ 0x9e37_79b1u64.wrapping_mul(i as u64 + 1),
+                    on,
                 })
             })
             .collect();
@@ -637,7 +677,7 @@ pub fn generate(
                         seed ^ 0x5EED,
                     );
                     let tile = pick_biome(&biomes, e, m);
-                    let (ore, ore_amount) = pick_ore(&ores, col, row, e);
+                    let (ore, ore_amount) = pick_ore(&ores, col, row, e, tile);
                     cells.push(Cell {
                         tile,
                         ore,
@@ -686,16 +726,17 @@ fn pick_biome(biomes: &[ResolvedBiome], e: f32, m: f32) -> u16 {
     biomes.last().map(|b| b.tile).unwrap_or(0)
 }
 
-fn pick_ore(ores: &[ResolvedOre], col: u32, row: u32, e: f32) -> (u16, u16) {
+fn pick_ore(ores: &[ResolvedOre], col: u32, row: u32, e: f32, terrain: u16) -> (u16, u16) {
     for o in ores {
         if e < o.min_e || e > o.max_e || o.freq <= 0.0 {
+            continue;
+        }
+        if !o.on.is_empty() && !o.on.contains(&terrain) {
             continue;
         }
         let n = value_noise(col as f32 / o.scale, row as f32 / o.scale, o.seed);
         let thr = 1.0 - o.freq;
         if n > thr {
-            // Amount ramps from 40% of richness at the deposit edge to 100% at
-            // its peak, so bigger deposits are richer in the middle.
             let t = ((n - thr) / (1.0 - thr)).clamp(0.0, 1.0);
             let amount = (o.richness * (0.4 + 0.6 * t)).min(u16::MAX as f32) as u16;
             return (o.tile, amount);
@@ -865,6 +906,33 @@ mod tests {
     }
 
     #[test]
+    fn tileset_parses_animated_tile_reference() {
+        let json = r#"{
+            "tiles": [
+                { "id": "grass", "color": [0.3, 0.6, 0.25, 1.0] },
+                { "id": "water", "frames": "sea.spriteframes", "clip": "Waves" },
+                { "id": "lava",  "frames": "", "clip": "Flow" }
+            ]
+        }"#;
+        let ts = TileSet::parse(json).unwrap();
+        // A plain tile has no animation.
+        assert!(ts.tile(0).unwrap().anim.is_none());
+        // A tile with a library + clip animates.
+        let anim = ts.tile(1).unwrap().anim.as_ref().expect("water animates");
+        assert_eq!(anim.frames, "sea.spriteframes");
+        assert_eq!(anim.clip, "Waves");
+        // A blank library path is ignored (stays static).
+        assert!(ts.tile(2).unwrap().anim.is_none());
+
+        // Round-trips through the authoring doc without losing the reference.
+        let doc = TileSetDoc::from_json(json).unwrap();
+        let reparsed = TileSetDoc::from_json(&doc.to_json()).unwrap();
+        assert_eq!(reparsed.tiles[1].frames.as_deref(), Some("sea.spriteframes"));
+        assert_eq!(reparsed.tiles[1].clip.as_deref(), Some("Waves"));
+        assert!(reparsed.tiles[0].frames.is_none());
+    }
+
+    #[test]
     fn placeholder_generation_is_deterministic_and_bounded() {
         let a = generate(20, 16, 42, None, None);
         let b = generate(20, 16, 42, None, None);
@@ -896,10 +964,12 @@ mod tests {
             { "tile": "mountain", "max_elevation": 1.01 }
         ],
         "ores": [
-            { "tile": "coal",    "frequency": 0.5, "richness": 5000,
-              "min_elevation": 0.35, "max_elevation": 0.75, "scale": 4 },
-            { "tile": "uranium", "frequency": 0.5, "richness": 1000,
-              "min_elevation": 0.75, "max_elevation": 1.01, "scale": 4 }
+            { "tile": "coal",    "frequency": 0.8, "richness": 5000,
+              "min_elevation": 0.0, "max_elevation": 1.01, "scale": 4,
+              "on": ["mountain"] },
+            { "tile": "uranium", "frequency": 0.8, "richness": 1000,
+              "min_elevation": 0.0, "max_elevation": 1.01, "scale": 4,
+              "on": ["mountain"] }
         ]
     }"#;
 
@@ -917,21 +987,20 @@ mod tests {
         for row in 0..64 {
             for col in 0..64 {
                 let c = grid.cell(col, row).unwrap();
-                // Every base tile is a real biome tile, never an ore tile.
                 assert!(c.tile == water || c.tile == grass || c.tile == mountain);
                 if c.tile == water {
                     biome_seen[0] = true;
-                    // Water is below every ore's elevation window -> never ore.
                     assert!(!c.has_ore(), "ore on water at ({col},{row})");
                 }
                 if c.tile == grass {
                     biome_seen[1] = true;
-                    // Grass sits in coal's band; uranium is highland-only.
-                    assert_ne!(c.ore, uranium, "uranium in grass at ({col},{row})");
+                    assert!(!c.has_ore(), "ore on grass at ({col},{row})");
                 }
                 if c.tile == mountain {
                     biome_seen[2] = true;
-                    assert_ne!(c.ore, coal, "coal in mountain at ({col},{row})");
+                }
+                if c.has_ore() {
+                    assert_eq!(c.tile, mountain, "ore only on mountain at ({col},{row})");
                 }
                 if c.ore == coal {
                     ore_seen[0] = true;
@@ -939,6 +1008,7 @@ mod tests {
                 }
                 if c.ore == uranium {
                     ore_seen[1] = true;
+                    assert!(c.ore_amount > 0);
                 }
             }
         }

@@ -2,6 +2,9 @@
 name = "flux_editor"
 version = "0.1.0"
 edition = "2024"
+# The Velopack auto-updater reads its release feed from this URL
+# (see src/updater.rs). Must point at the repo hosting the releases.
+repository = "https://github.com/thegalaxydev/flux"
 
 [dependencies]
 flux_core.workspace = true
@@ -13,6 +16,7 @@ flux_view.workspace = true
 eframe = "0.32"
 glam.workspace = true
 rfd = "0.15"
+velopack = "1.2"
 serde.workspace = true
 serde_json.workspace = true
 indexmap.workspace = true
